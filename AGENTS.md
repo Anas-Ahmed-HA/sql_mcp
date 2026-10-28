@@ -17,9 +17,10 @@ dotnet test
 dotnet run --project src/SqlMcp.Server
 ```
 
-The server listens on `http://localhost:5100` (MCP endpoint `/mcp`, health `/health`). To run a second
-instance for testing, override the port with the `Urls` environment variable or `--urls`.
-`ASPNETCORE_URLS` does not work, because `Urls` in `appsettings.json` takes precedence over it.
+`dotnet run` listens on `http://localhost:5100` (from `Properties/launchSettings.json`; MCP endpoint `/mcp`,
+health `/health`). To run a second instance for testing, override the port with `--urls` or the `Urls`
+environment variable. It needs `src/SqlMcp.Server/appsettings.Local.json` with at least one connection string;
+copy `appsettings.Local.example.json`.
 
 ## C# conventions
 
@@ -68,8 +69,9 @@ instance for testing, override the port with the `Urls` environment variable or 
 5. **Not allowed must look like missing.** The catalog snapshot only contains whitelisted objects. Anything
    else gets SQL Server's own wording (`Invalid object name '…'.`) and never appears in keys, relationships
    or dependencies.
-6. **No secrets in Git.** Connection strings with passwords go in `src/SqlMcp.Server/appsettings.Local.json`
-   (gitignored) or environment variables. `appsettings.json` keeps empty values.
+6. **No secrets or server details in Git.** Connection strings, host names and server paths go in
+   `src/SqlMcp.Server/appsettings.Local.json` (gitignored, never published). `appsettings.json` holds only
+   defaults that are the same everywhere, and `appsettings.Local.example.json` only placeholders.
 7. **Every `run_select` call is audited**, including rejected and failed ones, with its database.
 
 ## Errors

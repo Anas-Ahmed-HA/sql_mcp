@@ -118,26 +118,26 @@ A database without a file is listed by `list_databases` but exposes no objects:
 | `Query` | `DefaultRows` (100), `MaxRows` (1000), `MaxCellLength` (1000), `AuditDirectory` (`logs`) |
 | `Metadata` | `Directory` (`metadata`, relative to the app folder) |
 | `RateLimit` | `RequestsPerMinute` (120) per caller IP on `/mcp` |
-| `Urls` | `http://localhost:5100` (ignored under IIS) |
+| `AllowedHosts` | `*`; set to the server's host name on a server |
 
-**Secrets:** `appsettings.json` is committed, so it keeps the connection string empty. Put the real value in
-`src/SqlMcp.Server/appsettings.Local.json`, which is gitignored and loaded in every environment:
+**Where each setting lives:**
 
-```json
-{
-  "Database": {
-    "ConnectionStrings": {
-      "Apps_InformationTechnology": "Server=<server>;Database=Apps_InformationTechnology;UID=<login>;PWD=<pwd>;",
-      "Other_Database": "Server=<server>;Database=Other_Database;UID=<login>;PWD=<pwd>;"
-    }
-  }
-}
-```
+| File | What goes there | Committed? |
+|---|---|---|
+| `appsettings.json` | Defaults that are the same everywhere: limits, timeouts, log levels | Yes, no secrets |
+| `Properties/launchSettings.json` | How `dotnet run` starts it locally: `http://localhost:5100`, Development | Yes |
+| `appsettings.Local.json` | This machine's settings: connection strings, and on a server `AllowedHosts` and `Query:AuditDirectory` | No: gitignored and never published |
+| IIS | Address, HTTPS certificate, app pool | No |
 
-Give each database a login that can open only that database, so the separation also holds in SQL Server.
+`appsettings.json` has no connection strings, so the server won't start until `appsettings.Local.json` lists at
+least one. To create it, copy
+[appsettings.Local.example.json](src/SqlMcp.Server/appsettings.Local.example.json) to `appsettings.Local.json` and
+fill it in. Give each database a login that can open only that database, so the separation also holds in SQL
+Server. Server host names and paths go there too, not in a committed file, because the repository is public.
 
-`dotnet publish` leaves this file out, so a server keeps its own copy (see [Deploying to IIS](#deploying-to-iis)).
-The environment variable `Database__ConnectionStrings__Apps_InformationTechnology` works as well.
+At startup the server logs an error if it can't write to the audit folder, and outside Development a warning if
+`AllowedHosts` is still `*`.
+
 Precedence, lowest to highest: `appsettings.json` → user secrets → `appsettings.Local.json` → environment
 variables → command line.
 
@@ -164,8 +164,8 @@ Connect Claude Code:
 claude mcp add --transport http ai-sql-mcp http://localhost:5100/mcp
 ```
 
-To run a second instance, change the port with the `Urls` environment variable or `--urls`. `ASPNETCORE_URLS`
-doesn't work, because `Urls` in `appsettings.json` takes precedence over it.
+`dotnet run` takes the address from `launchSettings.json`. To run a second instance, change the port with
+`--urls`, or with the `Urls` or `ASPNETCORE_URLS` environment variable.
 
 ## Deploying to IIS
 
@@ -179,20 +179,13 @@ them yet.
 1. Install the **ASP.NET Core 8 Hosting Bundle**, then restart IIS.
 2. Create an application pool with **.NET CLR version: No Managed Code**, and a site whose physical path is the
    deploy folder (for example `C:\inetpub\ai-sql-mcp`). Bind HTTPS with a certificate for the host name. IIS
-   bindings decide the address, so `Urls` is ignored under IIS.
-3. Create `appsettings.Local.json` in the deploy folder. It's the server's own copy and is never published:
-
-   ```json
-   {
-     "AllowedHosts": "<host name>",
-     "Query": { "AuditDirectory": "D:\\Logs\\ai-sql-mcp" },
-     "Database": { "ConnectionStrings": { "Apps_InformationTechnology": "Server=<server>;Database=<db>;UID=<login>;PWD=<pwd>;TrustServerCertificate=True;", "...": "one entry per database" } }
-   }
-   ```
-
-   Limit the file's NTFS permissions to administrators and `IIS AppPool\<pool name>` (read).
-4. Give `IIS AppPool\<pool name>` **Modify** rights on the audit directory. If the server can't write there it
-   only logs an error and still runs the query, so check that audit files appear after the first call.
+   bindings decide the address.
+3. Copy [appsettings.Local.example.json](src/SqlMcp.Server/appsettings.Local.example.json) into the deploy folder
+   as `appsettings.Local.json`. Fill in the host name, the audit folder and one connection string per database.
+   It's the server's own copy and is never published. Limit its NTFS permissions to administrators and
+   `IIS AppPool\<pool name>` (read).
+4. Give `IIS AppPool\<pool name>` **Modify** rights on the audit directory. The server checks this at startup and
+   logs an error if it can't write there. Queries still run in that case, without an audit record.
 
 **Each deploy:**
 

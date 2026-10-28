@@ -12,8 +12,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Holds this machine's password. A server keeps its own copy, which a deploy must neither ship nor overwrite. -->
-    <Content Update="appsettings.Local.json" CopyToPublishDirectory="Never" />
+    <!-- The real file holds this machine's passwords; a server keeps its own copy, which a deploy must neither ship
+         nor overwrite. The example is a template for that copy, not configuration. -->
+    <Content Update="appsettings.Local.json;appsettings.Local.example.json" CopyToPublishDirectory="Never" />
   </ItemGroup>
 
   <ItemGroup>

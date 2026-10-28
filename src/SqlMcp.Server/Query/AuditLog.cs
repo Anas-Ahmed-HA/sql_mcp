@@ -45,7 +45,30 @@ public sealed partial class JsonFileAuditLog : IAuditLog
     {
         _directory = Path.GetFullPath(Path.Combine(environment.ContentRootPath, options.Value.AuditDirectory));
         _logger = logger;
-        Directory.CreateDirectory(_directory);
+        CheckWritable();
+    }
+
+    /// <summary>
+    /// Writes and deletes a probe file, so a folder the service account can't write to is reported at startup
+    /// instead of being noticed only when audit files turn out to be missing.
+    /// </summary>
+    private void CheckWritable()
+    {
+        try
+        {
+            Directory.CreateDirectory(_directory);
+            var probe = Path.Combine(_directory, $".write-test-{Guid.NewGuid():N}");
+            File.WriteAllText(probe, string.Empty);
+            File.Delete(probe);
+            _logger.LogInformation("Audit files are written to {Directory}.", _directory);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogError(
+                ex,
+                "Cannot write audit files to {Directory}. Queries will run without an audit record until the service account can write there (Query:AuditDirectory).",
+                _directory);
+        }
     }
 
     public async Task WriteAsync(AuditEntry entry)

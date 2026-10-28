@@ -32,7 +32,8 @@ builder.Services.AddOptions<DatabaseOptions>()
     .Bind(builder.Configuration.GetSection(DatabaseOptions.SectionName))
     .Validate(
         o => o.IsValid(),
-        "Database:ConnectionStrings needs at least one entry; names may only use letters, digits, '_', '.' and '-', and no value may be empty.")
+        "Database:ConnectionStrings needs at least one entry (put them in appsettings.Local.json; see appsettings.Local.example.json); " +
+        "names may only use letters, digits, '_', '.' and '-', and no value may be empty.")
     .ValidateOnStart();
 
 builder.Services.AddOptions<QueryOptions>()
@@ -120,6 +121,16 @@ builder.Services
     }));
 
 var app = builder.Build();
+
+// Settings a server must change from the repo defaults; reported at startup so a wrong deploy shows up on day one.
+if (!app.Environment.IsDevelopment() && app.Configuration["AllowedHosts"] is null or "" or "*")
+{
+    app.Logger.LogWarning(
+        "AllowedHosts is '*', so requests for any host name are accepted. Set it to the server's host name in appsettings.Local.json.");
+}
+
+// Created now rather than on the first run_select, so its folder check runs at startup.
+app.Services.GetRequiredService<IAuditLog>();
 
 app.UseRateLimiter();
 
