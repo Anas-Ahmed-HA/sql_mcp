@@ -71,16 +71,8 @@ public sealed partial class DatabaseCatalog
         WHERE fk.parent_object_id = @id OR fk.referenced_object_id = @id
         ORDER BY fk.name, fkc.constraint_column_id;
 
-        SELECT DISTINCT
-               d.referenced_database_name,
-               COALESCE(d.referenced_schema_name, rs.name),
-               d.referenced_entity_name,
-               d.referenced_id,
-               CASE ro.type WHEN 'U' THEN N'table' WHEN 'V' THEN N'view' ELSE LOWER(ro.type_desc) END
+        SELECT DISTINCT d.referenced_id
         FROM sys.sql_expression_dependencies AS d
-        LEFT JOIN sys.objects AS ro ON ro.object_id = d.referenced_id
-        LEFT JOIN sys.schemas AS rs ON rs.schema_id = ro.schema_id
-        WHERE d.referencing_id = @id
-        ORDER BY 1, 2, 3;
+        WHERE d.referencing_id = @id AND d.referenced_id IS NOT NULL;
         """;
 }

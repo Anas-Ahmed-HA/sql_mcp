@@ -30,7 +30,7 @@ sources.Insert(
 builder.Services.AddOptions<DatabaseOptions>()
     .Bind(builder.Configuration.GetSection(DatabaseOptions.SectionName))
     .Validate(
-        o => o.ConnectionStrings.Count == 1 && !string.IsNullOrWhiteSpace(o.ConnectionStrings.Values.Single()),
+        o => o.ConnectionStrings.Count == 1 && !string.IsNullOrWhiteSpace(o.ConnectionString),
         "Phase 0 expects exactly one non-empty entry under Database:ConnectionStrings.")
     .ValidateOnStart();
 
@@ -70,9 +70,8 @@ builder.Services
         // No per-client state in memory, so any instance behind a load balancer can serve any request.
         o.SessionMode = HttpServerSessionMode.Stateless;
     })
-    // Registers every [McpServerToolType] / [McpServerResourceType] class in this assembly (Tools/, Resources/).
+    // Registers every [McpServerToolType] class in this assembly (see Tools/).
     .WithToolsFromAssembly()
-    .WithResourcesFromAssembly()
     .WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
     {
         try

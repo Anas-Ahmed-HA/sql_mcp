@@ -33,14 +33,16 @@ Follow this standard exactly: the server finds sections by their headings.
 
 - **This is a whitelist.** The server exposes only the views in this table. Every tool treats any other view
   as if it doesn't exist.
-- **It narrows, never widens.** A listed view must also be visible to the database login, inside
-  `Database:ObjectScope`, and not in `Database:ExcludeObjects`. Columns in `Database:ExcludeColumns` stay hidden.
+- **It's the only access control** in the server. A listed view must also be visible to the database login.
+  Every column of a listed view can be queried; to keep a column away from agents, whitelist a view (created in
+  the database) that doesn't select it.
 - **Use exact, schema-qualified names:** `dbo.PBI_PH_Assets`, not `PBI_PH_Assets`. The server logs a warning
   for any name that doesn't match a view.
 - **It fails closed.** If the file is missing, can't be read, or has no Allowed views table, no views are
   exposed.
 - **This file controls access.** Review changes to it like configuration changes. The server re-reads the
-  deployed copy on every call, so whoever can edit that copy decides what agents can see.
+  deployed copy on every call, so whoever can edit that copy decides what agents can see. A build replaces the
+  deployed copy only when the repo copy is newer.
 
 ## View sections
 
@@ -62,8 +64,7 @@ sentence saying what one row represents.
 - **Obvious columns:** the description can be the column name itself (`| ID | ID |`).
 - **Code values** go in the description: `` `Emp` = employee, `Loc` = location ``.
 - **Don't add data types.** Agents get those from the database through `describe_object`.
-- **Never list hidden columns** (those in `Database:ExcludeColumns`). Naming one tells agents it exists; the
-  server logs a warning.
+- The server logs a warning for columns the table lists that don't exist, and for columns it leaves out.
 
 ### Business rules
 

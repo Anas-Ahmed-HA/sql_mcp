@@ -1,12 +1,10 @@
 namespace SqlMcp.Server.Catalog;
 
-internal static partial class SqlNames
+// Splitting a multi-part name into its parts, without brackets or quotes.
+public readonly partial record struct ObjectName
 {
-    /// <summary>
-    /// Splits a multi-part name such as "name", "schema.name", "[schema].[name]" or "\"schema\".\"name\""
-    /// into its parts, without brackets or quotes. Returns null when the name is malformed.
-    /// </summary>
-    public static List<string>? Split(string input)
+    /// <summary>"a", "a.b", "[a].[b]" or "\"a\".\"b\"" into parts; null when the name is malformed.</summary>
+    private static List<string>? Split(string input)
     {
         var parts = new List<string>();
         var s = input.Trim();

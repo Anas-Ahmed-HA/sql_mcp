@@ -1,8 +1,8 @@
 namespace SqlMcp.Server.Catalog;
 
 /// <summary>
-/// The in-scope, non-excluded objects of one database at a point in time. Anything else is never loaded,
-/// so an object not found here simply does not exist as far as agents are concerned.
+/// The exposed objects of one database at a point in time. Anything else is never loaded, so an object not
+/// found here simply does not exist as far as agents are concerned.
 /// </summary>
 public sealed partial class CatalogSnapshot
 {
@@ -18,32 +18,15 @@ public sealed partial class CatalogSnapshot
 
     public bool TryGet(int objectId, out CatalogObject obj) => _byId.TryGetValue(objectId, out obj!);
 
-    /// <summary>
-    /// Resolves "name", "schema.name", "[schema].[name]" or "\"schema\".\"name\"". Matching is
-    /// case-insensitive, like SQL Server's default collation. Database-qualified names are rejected.
-    /// </summary>
-    public NameResolution Resolve(string name)
-    {
-        var parts = SqlNames.Split(name);
-        return parts switch
-        {
-            [var objectName] => Resolve(null, objectName),
-            [var schema, var objectName] => Resolve(schema, objectName),
-            _ => NameResolution.Invalid,
-        };
-    }
+    /// <summary>Resolves a name as an agent wrote it; database-qualified or malformed names are invalid.</summary>
+    public NameResolution Resolve(string name) =>
+        ObjectName.Parse(name) is { } parsed ? Resolve(parsed) : NameResolution.Invalid;
 
-    /// <summary>Resolves an already-split name; a null schema matches the name in any schema.</summary>
-    public NameResolution Resolve(string? schema, string name)
+    public NameResolution Resolve(ObjectName name)
     {
-        var candidates = Objects
-            .Where(o => Eq(o.Name, name) && (schema is null || Eq(o.Schema, schema)))
-            .ToList();
-
+        var candidates = Objects.Where(o => name.Matches(o.Schema, o.Name)).ToList();
         return new NameResolution(candidates.Count == 1 ? candidates[0] : null, candidates, IsInvalid: false);
     }
-
-    private static bool Eq(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 }
 
 /// <param name="Match">The single matching object, or null when there are zero or several candidates.</param>

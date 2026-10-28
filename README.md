@@ -1,17 +1,16 @@
 # AI_SqlMCP
 
-An MCP server that gives AI agents governed, read-only access to SQL Server tables and views.
-For now it runs on **localhost**. Later it will be hosted on a server, and agents will connect over HTTPS.
-The long-term goal is access across many databases and solutions, with per-caller visibility decided by
-deterministic policy, never by the agent.
+An MCP server that gives AI agents read-only access to whitelisted SQL Server views. It runs on
+**localhost** for now; later it will be hosted on a server and agents will connect over HTTPS. The long-term
+goal is access across many databases, with per-user visibility decided by deterministic policy, never by the agent.
 
-**Current phase: 0.3.** The server serves MCP over Streamable HTTP for one database. It has the object
-scope, object/column exclusions, four tools (`get_business_rules`, `list_objects`, `describe_object`,
-`run_select`) and a business-rules document per database. Agents can read data from the exposed views
-through guarded SELECT queries, and every query is audited. **There is no authentication yet.**
+**Status: phase 0.3.** One database, four tools, a business-rules document per database whose **Allowed views**
+table is an enforced whitelist, guarded SELECT queries and an audit log. **No authentication yet.**
 
-Coding conventions for contributors and AI agents, including the partial-class rule, are in
-[AGENTS.md](AGENTS.md).
+| Document | For |
+|---|---|
+| [AGENTS.md](AGENTS.md) | Conventions (partial classes) and security rules for contributors and AI agents |
+| [metadata/guidelines.md](metadata/guidelines.md) | The standard every metadata file follows |
 
 ## Tech stack
 
@@ -21,455 +20,152 @@ Coding conventions for contributors and AI agents, including the partial-class r
 | MCP | `ModelContextProtocol.AspNetCore` 2.3.0 (official C# SDK), Streamable HTTP, stateless |
 | Database | SQL Server via `Microsoft.Data.SqlClient` |
 | SQL validation | `Microsoft.SqlServer.TransactSql.ScriptDom` (Microsoft's T-SQL parser) |
-| DB principal | Read-only login, ideally views only (`sql/01_create_readonly_principal.sql`) |
 
-### Why stateless
-
-The server keeps no per-client session in memory (`HttpServerSessionMode.Stateless`, which is also the
-SDK default since the 2026-07-28 protocol revision). Any instance can serve any request, so it scales
-behind a load balancer without sticky sessions. The trade-off: the server can't send requests back to
-the client (sampling, elicitation, roots). A data gateway doesn't need those.
-
-## Endpoints
-
-| Path | Purpose |
-|---|---|
-| `POST /mcp` | MCP Streamable HTTP endpoint (JSON-RPC in, SSE-framed response out) |
-| `GET /health` | Liveness check for load balancers and monitoring |
+Stateless means no per-client session in memory: any instance can serve any request behind a load balancer.
+The server can't send requests back to the client (sampling, elicitation), which a data gateway doesn't need.
 
 ## Tools
 
-| Tool | Status |
+| Tool | Returns |
 |---|---|
-| `get_business_rules` | Implemented (0.3), see *Business-rules metadata* |
-| `list_objects` | Implemented (0.1) |
-| `describe_object` | Implemented (0.1); includes the object's business-rules section since 0.3 |
-| `run_select` | Implemented (0.2) |
+| `get_business_rules` | The database's metadata document: allowed views, column meanings, rules, relationships |
+| `list_objects` | The exposed views, with descriptions and column counts |
+| `describe_object` | One view's columns, keys and constraints, plus its section of the metadata document |
+| `run_select` | The rows of one guarded T-SQL `SELECT` (row cap, timeout, audited) |
 
-| Resource | Content |
+Endpoints: `POST /mcp` (MCP) and `GET /health`.
+
+## How access is controlled
+
+1. **Database login:** read-only. [sql/01_create_readonly_principal.sql](sql/01_create_readonly_principal.sql)
+   creates one that can only `SELECT` views.
+2. **Allowed views whitelist:** the `## Allowed views` table in `metadata/<ConnectionName>.md` is the only access
+   control in the server. Objects not listed don't exist for agents, and every tool treats them as missing.
+   It **fails closed**: no file or no table means nothing is exposed. Changes apply on the next call. Every
+   column of an allowed view can be queried, so to keep a column away from agents, whitelist a narrower view.
+3. **SQL guard** ([SelectQueryGuard.cs](src/SqlMcp.Server/Query/SelectQueryGuard.cs)) parses the query and allows
+   exactly one `SELECT` statement:
+   - The only table sources are allowed views, subqueries, joins, CTEs, `VALUES`, `PIVOT`/`UNPIVOT`,
+     `OPENJSON` and `STRING_SPLIT`/`GENERATE_SERIES`.
+   - It rejects `SELECT INTO`, DML, DDL, `EXEC` and multiple statements or batches.
+   - It rejects database-qualified names, `OPENROWSET`/`OPENQUERY`, table-valued and user-defined functions,
+     metadata functions such as `OBJECT_ID`, variable assignment and `NEXT VALUE FOR`.
+   - An object that isn't allowed gets SQL Server's own wording, `Invalid object name '…'.`, so it can't be
+     told apart from a missing one.
+4. **Execution limits:**
+   - command timeout
+   - row cap: the server stops sending rows at the limit, and the result says it was cut off
+   - long text cut to a maximum length
+5. **Audit:** every call writes one JSON line to `logs/audit-yyyy-MM-dd.jsonl`, including rejected and failed
+   queries. Each line holds the caller IP and user agent, the SQL, the outcome, the objects read, the rows
+   returned and the duration.
+
+## Metadata
+
+One file per connection, `metadata/<ConnectionName>.md`, written to [metadata/guidelines.md](metadata/guidelines.md):
+
+- **Sections:** allowed views, then a section per view (columns, business rules, notes), then relationships,
+  then additional metadata.
+- **Deployment:** the files are copied next to the binary on build. The build replaces the deployed copy only
+  when the repo copy is newer.
+- **Live reload:** the server re-reads the deployed copy whenever it changes, so no restart is needed.
+- **Checks logged at startup and after each change:**
+  - whitelist entries that are malformed or match nothing
+  - allowed views without a Columns table
+  - columns listed that don't exist, and columns not described
+
+## Configuration
+
+| Section | Settings |
 |---|---|
-| `metadata://business-rules` | The business-rules document of the database (text/markdown) |
+| `Database` | `ConnectionStrings` (exactly one, named; the name is also the metadata file name), `CommandTimeoutSeconds`, `CatalogCacheMinutes` |
+| `Query` | `DefaultRows` (100), `MaxRows` (1000), `MaxCellLength` (1000), `AuditDirectory` (`logs`) |
+| `Metadata` | `Directory` (`metadata`, relative to the app folder) |
+| `Urls` | `http://localhost:5100` |
 
-### Object scope (server-enforced)
-
-A server setting decides which object types the MCP exposes at all:
+**Secrets:** `appsettings.json` is committed, so it keeps the connection string empty. Put the real value in
+`src/SqlMcp.Server/appsettings.Local.json`, which is gitignored and loaded in every environment:
 
 ```json
-"Database": { "ObjectScope": "Views" }   // Views | Tables | All, default Views
+{ "Database": { "ConnectionStrings": { "Apps_InformationTechnology": "Server=<server>;Database=<db>;UID=<login>;PWD=<pwd>;" } } }
 ```
 
-The agent can't change it. Every tool applies it: listing, describing, and the query guard, which
-rejects any query that references an object outside the scope. A tool's `kind` parameter can only
-**narrow** within the scope, never widen it. Asking for an out-of-scope kind returns an error.
-Describing an out-of-scope object returns "not found", the same as an object that doesn't exist, so the
-response never reveals that it exists.
+On a server, use the environment variable `Database__ConnectionStrings__Apps_InformationTechnology` instead.
+Precedence, lowest to highest: `appsettings.json` → user secrets → `appsettings.Local.json` → environment
+variables → command line.
 
-Out-of-scope objects are never loaded into the catalog. The list of in-scope objects is cached in memory
-for `CatalogCacheMinutes` (default 10), so new or dropped objects show up within that time.
+**TLS:** SqlClient validates the SQL Server's certificate. With a self-signed or internal-CA certificate, either
+trust the CA on the host or, on a trusted network only, add `TrustServerCertificate=True`.
 
-### Allowed views (server-enforced)
-
-On top of the scope, the `## Allowed views` table in the connection's metadata file is a hard whitelist. An
-object is exposed only if it is visible to the login, inside `ObjectScope`, listed there, and not excluded.
-Currently that's only `dbo.PBI_PH_Assets`. See *Business-rules metadata* below.
-
-### Exclusions (server-enforced)
-
-Inside the scope, specific objects and columns can be hidden:
-
-```json
-"Database": {
-  "ExcludeObjects": [ "dbo.SomeView" ],
-  "ExcludeColumns": {
-    "dbo.V_TWEBWF_Employee": [ "NationalID", "PayrollPass", "Birthdate" ],
-    "*": [ "SomeColumnHiddenEverywhere" ]
-  }
-}
-```
-
-- **Names:** `schema.object`, or just `object` to match it in any schema. `*` as the `ExcludeColumns` key applies
-  to every object. Matching is case-insensitive. Brackets are allowed.
-- **Hidden objects** behave exactly like objects that don't exist: absent from `list_objects`, "not found" in
-  `describe_object`, and not listed as anything's dependency.
-- **Hidden columns** are absent from `describe_object`, and column counts exclude them. Keys, foreign keys
-  and check constraints that involve a hidden column are dropped too, because they would reveal its name.
-  `describe_object` notes how many columns are hidden, but not which ones.
-- **Typos are logged.** An entry that matches no object or column logs a warning at each catalog load,
-  because a misspelled entry hides nothing.
-- **`run_select`** applies the same lists: it rejects queries that name a hidden column, and `SELECT *`
-  on an object with hidden columns.
-
-The `appsettings.json` in this repo ships with the `V_TWEBWF_Employee` list **empty, by decision**. That view
-isn't in the Allowed views whitelist, so it isn't exposed at all right now. If it's ever allowed, these are the
-candidates to hide, based on column names only: `NationalID`, `PayrollPass`, `Alg_AccountNo`, `Alg_Passno`, `Alg_AddressPass`,
-`Alg_VisaNo`, `Alg_StayNo`, `Alg_Warrantyno`, `Birthdate`, `Children_count`, `CarNo`, `PersonalEmail`,
-`Alg_personalEmail`, `Alg_personalPhone`, `Mobile`, `Mobile1`, `Phone`, `Address`, `Street`.
-
-Exclusions shape what this MCP exposes. They don't replace database permissions: the login can still read
-the hidden columns, so a DBA should still narrow the login where possible.
-
-This matters because the database login is often broader than what should be exposed. For example,
-`Agent` on `Apps_InformationTechnology` is in `db_datareader` and can read 83 tables, while the
-intended surface is 5 views. The scope keeps the MCP to the views either way. The DB permission is still
-the real boundary, so narrow the login too.
-
-### 1. `list_objects`
-
-Lists the tables and/or views the agent may use.
-
-| Parameter | Meaning |
-|---|---|
-| `kind` | `views`, `tables` or `all`, limited to the server's `ObjectScope` |
-| `schema` (optional) | Only this schema |
-| `search` (optional) | Name contains this text |
-
-Returns, per object: schema, name, type, description (`MS_Description`), column count, and approximate row
-count for tables (from `sys.partitions`). Views don't get a row count, because counting a view runs its
-whole query.
-
-### 2. `describe_object`
-
-Returns the schema of one table or view.
-
-- **Columns:** name, type, length/precision, nullable, identity, computed, default, description
-- **Constraints:** primary key, unique, check
-- **Relationships:** foreign keys in both directions, limited to objects inside the scope
-- **For views:** the base objects the view reads (`sys.sql_expression_dependencies`)
-- **Business metadata:** the matching section of the connection's metadata file (see below), once that exists
-
-SQL Server views have no keys, constraints or foreign keys. Since the exposed surface is mainly views,
-most relationship information has to come from the metadata files, not from the database.
-
-Accepted names: `PBI_PH_Assets`, `dbo.PBI_PH_Assets`, `[dbo].[PBI_PH_Assets]`. Database-qualified names
-are rejected. Foreign keys are only returned when both ends are in scope.
-
-**Permissions this tool can use:** with plain `SELECT`, the login sees columns, types, keys and foreign
-keys. Default and check-constraint definitions, computed-column formulas, and the objects a view reads
-from also need `VIEW DEFINITION`. Without it those fields are empty, and `describe_object` adds a note
-saying so. `Agent` on `Apps_InformationTechnology` currently doesn't have it.
-
-### 3. `run_select`
-
-Runs one read-only `SELECT` against objects in scope. It's meant for statistics and exploration
-(`COUNT`, `GROUP BY`, `AVG`, `TOP n`), so no separate statistics tool is needed.
-
-| Parameter | Meaning |
-|---|---|
-| `sql` | A single T-SQL `SELECT` statement (CTEs allowed) |
-| `maxRows` (optional) | Row limit; defaults to `Query:DefaultRows`, capped at `Query:MaxRows` |
-
-Returns `columns` (name and SQL type), `rows` (arrays of values), `rowCount`, `truncated`, `elapsedMs`, and a
-`note` when the result was cut off.
-
-**Guard** ([SelectQueryGuard.cs](src/SqlMcp.Server/Query/SelectQueryGuard.cs)), applied before anything
-reaches the database. It parses with ScriptDom's `TSql170Parser` (SQL Server 2025 syntax), never with text
-patterns, so comments, casing, brackets and whitespace make no difference.
-
-- exactly one batch with exactly one statement, and it must be a `SELECT`: no `SELECT INTO`, DML, DDL, `EXEC`,
-  `WAITFOR` or `GO`-separated batches
-- every referenced object must exist in the catalog **and** be inside `ObjectScope`, and excluded objects don't count
-  (CTE names are recognized)
-- no hidden column may be referenced anywhere (select list, `WHERE`, `JOIN`, `ORDER BY`, subqueries, CTEs), and no
-  `SELECT *` on an object that has hidden columns (`COUNT(*)` is fine)
-- no three- or four-part names (no cross-database or linked-server access)
-- table sources limited to tables/views, subqueries, joins, `VALUES`, `PIVOT`/`UNPIVOT`, `OPENJSON`,
-  `STRING_SPLIT`/`GENERATE_SERIES`: so no `OPENROWSET`, `OPENQUERY`, `OPENDATASOURCE` or table-valued functions
-- no user-defined function or method calls, no metadata functions (`OBJECT_ID`, `OBJECT_DEFINITION`, `COL_NAME`,
-  `HAS_PERMS_BY_NAME`, …), no variable assignment, no `NEXT VALUE FOR`
-
-Hidden columns and hidden objects are rejected with SQL Server's own wording (`Invalid column name 'X'.`,
-`Invalid object name 'X'.`), so an agent can't tell a hidden column from one that doesn't exist.
-
-Known limits of the guard:
-- Hidden columns are matched **by name** across all objects in the query. A visible column that happens to
-  share a hidden column's name in another object is rejected too, so the query has to avoid that name.
-- `SELECT t.*` is rejected if **any** object in the query has hidden columns, even when `t` itself has none.
-
-**Execution** ([SelectQueryExecutor.cs](src/SqlMcp.Server/Query/SelectQueryExecutor.cs)): command timeout
-(`Database:CommandTimeoutSeconds`). Rows stop at the limit, and the server is told to stop sending the rest.
-Long text is cut to `Query:MaxCellLength` characters, and binary values are summarized. SQL Server errors
-(bad column, conversion) are passed back unchanged so the agent can fix its query.
-
-**Audit** ([AuditLog.cs](src/SqlMcp.Server/Query/AuditLog.cs)): every call writes one JSON line to
-`<Query:AuditDirectory>/audit-yyyy-MM-dd.jsonl`, with these fields:
-- timestamp, caller (IP and user agent until auth exists, then the user)
-- SQL text, outcome (`ok`, `rejected`, `error`, `cancelled`) and reason
-- objects read, row count, truncated, duration
-
-Rejected and failed queries are audited too. A failed audit write is logged but doesn't block the query.
-On a server, set `AuditDirectory` to an absolute path outside the app folder. Behind a reverse proxy, the
-recorded IP is the proxy's until forwarded headers are configured.
-
-**Errors:** expected errors (rejected query, unknown object) are returned to the agent as tool errors. They
-are not logged as server failures.
-
-## Business-rules metadata
-
-Each connection string has a Markdown file with the knowledge the database itself doesn't hold:
-
-```
-metadata/
-└─ Apps_InformationTechnology.md     one file per entry under Database:ConnectionStrings
-```
-
-The files live at the repo root and are copied next to the binary on build (`Metadata:Directory`, default
-`metadata`, relative to the app folder). The server re-reads a file whenever its timestamp or size changes,
-so edits to the deployed copy apply without a restart.
-
-**How agents get it:**
-
-| Where | What |
-|---|---|
-| `get_business_rules` tool | The whole document. A tool, because many agents can call tools but not read resources |
-| `metadata://business-rules` resource | The same document, for agents that read MCP resources |
-| `describe_object` | The object's own section (`businessMetadata`), plus a note pointing to `get_business_rules` |
-| Server instructions | Tell agents to call `get_business_rules` first |
-
-**Writing the file:** follow [metadata/guidelines.md](metadata/guidelines.md). In short:
-
-```
-# <ConnectionName>                      purpose
-## Allowed views                        | View | Description |      ← enforced whitelist
-## <schema>.<view>                      one per allowed view
-### Columns                             | Column | Description |    every column (required)
-### Business rules                      optional
-### Notes                               optional
-## Relationships                        | From | To | Cardinality | Notes |
-## Additional metadata                  optional, applies to all views
-```
-
-**The Allowed views table is enforced.** Everything else in the file only explains; this one table controls
-access:
-
-- Only listed objects are exposed. Every tool treats anything else as if it doesn't exist, and that includes
-  dependency lists in `describe_object`.
-- It narrows `ObjectScope` and the exclusion lists, and never widens them.
-- It **fails closed**: no file, an unreadable file, or no `## Allowed views` table means nothing is exposed,
-  and an error is logged.
-- Changes apply on the next call. The catalog snapshot is rebuilt whenever the file changes, without waiting
-  for `CatalogCacheMinutes`. Whoever can edit the deployed copy decides what agents see, so treat it like
-  configuration.
-
-**Checks logged at each catalog load:**
-- whitelist entries that aren't `schema.view`, or that match no visible object
-- allowed views without a `## schema.view` section and `### Columns` table
-- columns the file lists that don't exist or are hidden, and visible columns it doesn't describe
-- mentions of hidden objects or columns anywhere in the file, which would tell agents those items exist
-
-## Layout
-
-Every class is `partial`, and classes with several concerns are split into `ClassName.Concern.cs` files
-(see [AGENTS.md](AGENTS.md)). Files are listed by class below.
-
-```
-AI_SqlMCP/
-├─ AGENTS.md                      conventions for contributors and AI agents (CLAUDE.md imports it)
-├─ Directory.Build.props          shared target framework / language settings
-├─ AI_SqlMCP.sln
-├─ metadata/
-│  ├─ guidelines.md                      the standard every metadata file follows
-│  └─ Apps_InformationTechnology.md      allowed views, columns, rules, relationships for that connection
-├─ sql/
-│  └─ 01_create_readonly_principal.sql   login + user + [mcp_view_reader] role, views only
-└─ src/SqlMcp.Server/
-   ├─ Program.cs                  ASP.NET Core host, options, MCP over HTTP, endpoints
-   ├─ appsettings.json            committed settings; secrets go in appsettings.Local.json (gitignored)
-   ├─ Properties/launchSettings.json      local dev: http://localhost:5100, Development env
-   ├─ Configuration/              DatabaseOptions (+ ObjectScope), QueryOptions, MetadataOptions
-   ├─ Data/
-   │  ├─ ISqlConnectionFactory.cs / SqlConnectionFactory.cs   single place connections are opened
-   │  ├─ SqlDataReaderExtensions.cs
-   │  └─ DatabaseStartupCheck.cs  logs server/db/login/view count, warns if the login can write
-   ├─ Catalog/
-   │  ├─ IDatabaseCatalog.cs
-   │  ├─ DatabaseCatalog.cs       snapshot load + cache + whitelist   .Describe.cs  one object   .Sql.cs  catalog queries
-   │  │                           .MetadataChecks.cs  whitelist / column-documentation warnings
-   │  ├─ CatalogSnapshot.cs       in-scope objects, name resolution
-   │  ├─ ExclusionPolicy.cs       exclusion matching             .Diagnostics.cs  typo detection   .ObjectKey.cs
-   │  ├─ SqlNames.cs              multi-part name parsing ([schema].[name])
-   │  └─ CatalogModels.cs
-   ├─ Metadata/
-   │  ├─ IMetadataStore.cs
-   │  ├─ MetadataStore.cs         reads metadata/<ConnectionName>.md, re-reads on change   .Diagnostics.cs  hidden-name warning
-   │  ├─ MetadataDocument.cs      sections + per-object lookup   .Parsing.cs  headings   .Tables.cs  Allowed views / Columns tables
-   │  └─ ViewWhitelist.cs         the enforced Allowed views list (fails closed)
-   ├─ Query/
-   │  ├─ SelectQueryGuard.cs      validates agent SQL            .Rules.cs  allow/block lists   .Visitor.cs  syntax-tree walk
-   │  ├─ GuardResult.cs
-   │  ├─ SelectQueryExecutor.cs   timeout, row cap               .Values.cs  JSON-friendly values
-   │  └─ AuditLog.cs              JSON-lines audit file + log summary
-   ├─ Resources/
-   │  └─ MetadataResources.cs     metadata://business-rules
-   ├─ Security/
-   │  └─ ICallerContext.cs        the single source of caller identity (IP / user agent until auth)
-   └─ Tools/                      one file per tool
-      ├─ CatalogTools.cs          .ListObjects.cs   .DescribeObject.cs
-      ├─ MetadataTools.cs         .GetBusinessRules.cs
-      ├─ QueryTools.cs            .RunSelect.cs
-      └─ CatalogToolResults.cs / QueryToolResults.cs   response shapes returned to agents
-tests/SqlMcp.Tests/
-   ├─ SelectQueryGuardTests.cs    .Allowed.cs   .Rejected.cs   .HiddenColumns.cs
-   ├─ MetadataDocumentTests.cs    .Tables.cs
-   └─ ViewWhitelistTests.cs
-```
-
-Planned additions:
-
-```
-└─ src/SqlMcp.Server/
-   ├─ Auth/       token validation, fills ICallerContext with the user
-   └─ Security/   entitlement adapters, policy, row/column enforcement
-```
-
-## Setup
-
-### 1. Create the read-only principal
-
-Edit the `:setvar` values at the top of `sql/01_create_readonly_principal.sql`, then run it as a
-sysadmin or db_owner, in SSMS's SQLCMD mode or with:
-
-```bash
-sqlcmd -S <server> -E -C -i sql/01_create_readonly_principal.sql
-```
-
-The role gets `SELECT` on each view in one schema, and nothing on tables. Ownership chaining lets
-views read their base tables. The script ends with a check that should show `VisibleTables = 0`
-and `CanInsert = 0`.
-
-### 2. Configure the connection string
-
-Connection strings are named per database under `Database:ConnectionStrings`. Phase 0 requires exactly one:
-
-```json
-"Database": {
-  "ConnectionStrings": {
-    "Apps_InformationTechnology": "Server=<server>;Database=Apps_InformationTechnology;UID=<login>;PWD=<pwd>;"
-  },
-  "ObjectScope": "Views",
-  "ExcludeObjects": [],
-  "ExcludeColumns": { "dbo.V_TWEBWF_Employee": [ "NationalID", "..." ] },
-  "CommandTimeoutSeconds": 30,
-  "CatalogCacheMinutes": 10
-}
-```
-
-Limits for `run_select` live in their own section:
-
-```json
-"Query": {
-  "DefaultRows": 100,
-  "MaxRows": 1000,
-  "MaxCellLength": 1000,
-  "AuditDirectory": "logs"
-}
-```
-
-`appsettings.json` is committed, so it keeps the connection-string **key with an empty value**. Put the real
-value somewhere that isn't committed:
-
-- **Local development:** `src/SqlMcp.Server/appsettings.Local.json`, which is gitignored, loaded in every
-  environment and copied next to the binary on build:
-
-  ```json
-  {
-    "Database": {
-      "ConnectionStrings": {
-        "Apps_InformationTechnology": "Server=<server>;Database=<db>;UID=<login>;PWD=<pwd>;"
-      }
-    }
-  }
-  ```
-
-  User secrets also work, but only in the Development environment:
-
-  ```bash
-  dotnet user-secrets --project src/SqlMcp.Server set "Database:ConnectionStrings:Apps_InformationTechnology" "Server=<server>;Database=<db>;UID=<login>;PWD=<pwd>;"
-  ```
-
-- **Server:** the environment variable `Database__ConnectionStrings__Apps_InformationTechnology`, or your
-  secret store (Azure Key Vault, IIS app pool environment, etc.).
-
-Precedence, lowest to highest: `appsettings.json` → `appsettings.{Environment}.json` → user secrets →
-`appsettings.Local.json` → environment variables → command line.
-
-**TLS:** SqlClient encrypts and validates the server certificate by default. If the SQL Server uses a
-self-signed or internal-CA certificate, the login fails with *"certificate chain was issued by an
-authority that is not trusted"*. Fix it properly by trusting the issuing CA on the MCP host, or, on a
-trusted network only, add `TrustServerCertificate=True` to the connection string.
-
-### 3. Run locally
+## Run
 
 ```bash
 dotnet run --project src/SqlMcp.Server
 ```
 
-It listens on `http://localhost:5100` only, set by `Urls` in `appsettings.json`, so other machines can't
-reach it. Check it with:
-
 ```bash
 curl http://localhost:5100/health
 ```
-
-Run the guard tests:
 
 ```bash
 dotnet test
 ```
 
-### 4. Connect an agent
-
-Claude Code:
+Connect Claude Code:
 
 ```bash
 claude mcp add --transport http ai-sql-mcp http://localhost:5100/mcp
 ```
 
-Any other MCP client: point its Streamable HTTP transport at `http://localhost:5100/mcp`.
+To run a second instance, change the port with the `Urls` environment variable or `--urls`. `ASPNETCORE_URLS`
+doesn't work, because `Urls` in `appsettings.json` takes precedence over it.
 
-## Deploying to a server (later)
+## Deploying (later)
 
-- **Hosting:** IIS (ASP.NET Core Hosting Bundle 8), a Windows service, or a container. Change `Urls`
-  to the address it should listen on, or override it with the environment variable `Urls` or `--urls` on the
-  command line. `ASPNETCORE_URLS` does **not** work here, because the `Urls` value in `appsettings.json`
-  takes precedence over it.
-- **TLS:** terminate HTTPS at IIS or a reverse proxy, or configure a Kestrel certificate. Agents should
-  only connect over `https://`.
-- **Response buffering:** responses are SSE (`text/event-stream`). Proxies that buffer responses
-  (IIS ARR, nginx `proxy_buffering on`) must not buffer this path.
-- **Host filtering:** set `AllowedHosts` in `appsettings.json` to the server's real host names instead of `*`.
-- **Exposure:** the endpoint is open by decision until the auth phase (see below). Anyone who can reach
-  the URL can use every tool with the read-only principal's full access, so prefer an internal network
-  or VPN over a public address in the meantime.
-- **Which agents can connect:** agents running inside your network (such as Claude Code) can use an
-  internal URL. Cloud-hosted connectors (such as custom connectors in claude.ai) connect from the
-  provider's cloud and need a public HTTPS address, so don't use them until auth exists.
+- **Hosting:** IIS (ASP.NET Core Hosting Bundle 8), a Windows service or a container. Set `Urls` to the listening
+  address.
+- **HTTPS:** terminate TLS at IIS or a reverse proxy. Responses are SSE, so proxies must not buffer `/mcp`.
+- **Host filtering:** set `AllowedHosts` to the real host names, and `Query:AuditDirectory` to an absolute path.
+- **Exposure:** until auth exists, anyone who can reach the URL can use every tool, so keep it on an internal
+  network.
+  - Agents inside the network, such as Claude Code, can use an internal URL.
+  - Cloud-hosted connectors, such as claude.ai custom connectors, need a public URL. Don't use them yet.
 
 ## Identity model (decided)
 
-Agents act **on behalf of end users**: what an agent sees is what its user may see. Authentication is
-**deliberately open for now** and will arrive as delegated user tokens (OAuth / Entra ID, with
-on-behalf-of where needed). Until then the server cannot tell callers apart, so per-user rules can't be
-enforced. The code should still keep a single "current caller" abstraction, so auth slots in without
-touching the tools.
+Agents act **on behalf of end users**. Authentication is open for now and will arrive as delegated user tokens
+(OAuth / Entra ID). All caller identity comes from
+[ICallerContext](src/SqlMcp.Server/Security/ICallerContext.cs), which currently holds IP and user agent, so
+auth slots in there without touching the tools.
 
-## Design rules (hold for every phase)
+## Layout
 
-1. **The agent never decides access.** Visibility is enforced in code and in the database.
-2. **The DB principal is the last line of defense.** It can only read, whatever the query layer allows.
-3. **All connections go through `ISqlConnectionFactory`.** This is where per-caller `SESSION_CONTEXT` (RLS) is set later.
-4. **Stateless.** No per-caller state in process memory. Anything shared (catalog cache, entitlements) must be
-   safe to rebuild on any instance.
-5. **Metadata explains; only its Allowed views table enforces.** That table is a fail-closed whitelist. Nothing
-   else in the Markdown files acts as access control.
+Every class is `partial`. Classes with several concerns are split into `ClassName.Concern.cs` files, with
+one file per MCP tool (see [AGENTS.md](AGENTS.md)).
+
+```
+metadata/                  guidelines.md + one <ConnectionName>.md per connection
+sql/                       read-only principal script
+src/SqlMcp.Server/
+  Catalog/                 exposed objects (whitelist applied), object descriptions, ObjectName parsing
+  Configuration/           Database / Query / Metadata options
+  Data/                    connection factory, startup check
+  Metadata/                metadata file loading, parsing, Allowed views whitelist
+  Query/                   SQL guard, executor, audit log
+  Security/                caller identity
+  Tools/                   MCP tools and their response shapes
+  Program.cs               host, configuration, MCP registration
+tests/SqlMcp.Tests/        guard, metadata parsing, whitelist, name parsing
+```
 
 ## Roadmap
 
 | Phase | Scope |
 |---|---|
-| **0** | Skeleton: HTTP host on localhost, config, DB connectivity, read-only principal *(done)* |
-| **0.1** | `ObjectScope` setting + catalog + `list_objects` / `describe_object` tools + object/column exclusions *(done)* |
-| **0.2** | `run_select` tool: ScriptDom guard, row cap, timeout, audit log (caller IP until auth exists) *(done)* |
-| **0.3** | Per-connection metadata files (`metadata/<ConnectionName>.md`): `get_business_rules` tool, MCP resource, merged into `describe_object` *(done)* |
-| 1 | Authentication: delegated user tokens (Entra ID), caller identity, `/.well-known/oauth-protected-resource` |
-| 2 | Entitlement model + policy engine; row filters / column masking; SQL Server RLS |
-| 3 | Multiple databases / solutions; identity mapping; cross-system join rules |
+| **0** | HTTP host on localhost, config, DB connectivity, read-only principal *(done)* |
+| **0.1** | Catalog, `list_objects`, `describe_object` *(done)* |
+| **0.2** | `run_select`: SQL guard, row cap, timeout, audit log *(done)* |
+| **0.3** | Metadata files, `get_business_rules`, enforced Allowed views whitelist *(done)* |
+| 1 | Authentication: delegated user tokens (Entra ID), caller identity |
+| 2 | Per-user entitlements and policy; row filters; SQL Server RLS |
+| 3 | Multiple databases; identity mapping; cross-system join rules |

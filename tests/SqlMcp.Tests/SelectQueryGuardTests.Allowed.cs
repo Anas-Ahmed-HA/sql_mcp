@@ -11,11 +11,12 @@ public partial class SelectQueryGuardTests
     [InlineData("WITH x AS (SELECT Company FROM dbo.PBI_PH_Assets) SELECT Company, COUNT(*) FROM x GROUP BY Company")]
     [InlineData("SELECT ID FROM dbo.PBI_PH_Assets WHERE Assined_HRCode IN (SELECT User_HR_Code FROM dbo.V_Employee)")]
     [InlineData("SELECT * FROM dbo.PBI_PH_Assets")]
+    [InlineData("SELECT e.* FROM dbo.V_Employee AS e")]
     [InlineData("SELECT 1 AS one")]
     [InlineData("SELECT Company FROM dbo.PBI_PH_Assets -- ; DROP TABLE dbo.PH_Assets")]
     [InlineData("SELECT value FROM STRING_SPLIT('a,b', ',')")]
     [InlineData("SELECT Company, COUNT(*) AS n FROM dbo.PBI_PH_Assets GROUP BY Company HAVING COUNT(*) > 5 ORDER BY n DESC OFFSET 0 ROWS FETCH NEXT 5 ROWS ONLY")]
-    public void Allows_read_only_selects_on_visible_objects(string sql)
+    public void Allows_read_only_selects_on_exposed_objects(string sql)
     {
         var result = Validate(sql);
         Assert.True(result.IsAllowed, result.Error);

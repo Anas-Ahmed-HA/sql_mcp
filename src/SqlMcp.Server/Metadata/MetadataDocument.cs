@@ -66,14 +66,7 @@ public sealed partial class MetadataDocument
     {
         for (var i = 0; i < Sections.Count; i++)
         {
-            var names = SqlNames.Split(Sections[i].Title.Replace("`", string.Empty)) switch
-            {
-                [var objectName] => Eq(objectName, name),
-                [var sectionSchema, var objectName] => Eq(sectionSchema, schema) && Eq(objectName, name),
-                _ => false,
-            };
-
-            if (names)
+            if (ObjectName.Parse(Sections[i].Title) is { } heading && heading.Matches(schema, name))
             {
                 return i;
             }

@@ -3,10 +3,7 @@ using SqlMcp.Server.Metadata;
 
 namespace SqlMcp.Server.Tools;
 
-/// <summary>
-/// Business-rules tools: get_business_rules (one file per tool). The same document is also an MCP resource;
-/// the tool exists because many agents can call tools but not read resources.
-/// </summary>
+/// <summary>Business-rules tools: get_business_rules (one file per tool).</summary>
 [McpServerToolType]
 public sealed partial class MetadataTools(IMetadataStore metadata)
 {

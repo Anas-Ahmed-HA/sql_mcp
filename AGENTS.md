@@ -56,18 +56,17 @@ instance for testing, override the port with the `Urls` environment variable or 
    or metadata text.
 2. **All agent SQL goes through `SelectQueryGuard`** before `SelectQueryExecutor` runs it. Never execute
    unvalidated text.
-3. **Hidden must look like missing.** Excluded objects and hidden columns return the same wording SQL Server
-   uses for objects and columns that don't exist (`Invalid object name '…'.`, `Invalid column name '…'.`),
-   and never appear in metadata, keys, relationships or dependencies.
-4. **Out of scope is never loaded.** The catalog snapshot only contains in-scope, non-excluded objects.
-5. **Metadata explains; only its Allowed views table enforces.** The `metadata/<ConnectionName>.md` files
-   follow [metadata/guidelines.md](metadata/guidelines.md). Their `## Allowed views` table is a hard whitelist:
-   it narrows what ObjectScope and the exclusions allow and never widens it, and it fails closed (missing file
-   or table means no views are exposed). Everything else in the files is explanation for agents and is never
-   used for access control.
-6. **No secrets in Git.** Connection strings with passwords go in `src/SqlMcp.Server/appsettings.Local.json`
+3. **The Allowed views whitelist is the only access control.** The `## Allowed views` table in
+   `metadata/<ConnectionName>.md` (format: [metadata/guidelines.md](metadata/guidelines.md)) decides which
+   objects exist for agents. It fails closed: no file or no table means nothing is exposed. Don't add other
+   object or column filters; a column that must stay away from agents belongs in a narrower database view.
+   Everything else in the metadata files is explanation and is never used for access control.
+4. **Not allowed must look like missing.** The catalog snapshot only contains whitelisted objects. Anything
+   else gets SQL Server's own wording (`Invalid object name '…'.`) and never appears in keys, relationships
+   or dependencies.
+5. **No secrets in Git.** Connection strings with passwords go in `src/SqlMcp.Server/appsettings.Local.json`
    (gitignored) or environment variables. `appsettings.json` keeps empty values.
-7. **Every `run_select` call is audited**, including rejected and failed ones.
+6. **Every `run_select` call is audited**, including rejected and failed ones.
 
 ## Tests
 

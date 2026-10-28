@@ -20,7 +20,7 @@ public sealed partial class SelectQueryGuard
         typeof(GlobalFunctionTableReference), // STRING_SPLIT, GENERATE_SERIES
     ];
 
-    // Built-in metadata functions that could confirm hidden objects or columns exist, or read definitions.
+    // Built-in metadata functions that could confirm objects outside the whitelist exist, or read definitions.
     private static readonly HashSet<string> BlockedFunctions = new(StringComparer.OrdinalIgnoreCase)
     {
         "OBJECT_ID", "OBJECT_NAME", "OBJECT_SCHEMA_NAME", "OBJECT_DEFINITION", "OBJECTPROPERTY", "OBJECTPROPERTYEX",

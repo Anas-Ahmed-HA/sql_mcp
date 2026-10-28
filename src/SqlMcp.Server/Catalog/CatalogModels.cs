@@ -1,4 +1,4 @@
-using SqlMcp.Server.Configuration;
+using System.Text.Json.Serialization;
 
 namespace SqlMcp.Server.Catalog;
 
@@ -8,9 +8,7 @@ public enum DbObjectKind
     View,
 }
 
-/// <summary>A table or view the server exposes. ObjectId is internal and never returned to agents.</summary>
-/// <param name="Columns">Visible columns, in column order. Hidden columns are not included.</param>
-/// <param name="HiddenColumns">Columns removed by ExcludeColumns. Never returned to agents; used to filter and to guard queries.</param>
+/// <summary>An exposed (whitelisted) table or view. ObjectId is internal and never returned to agents.</summary>
 public sealed partial record CatalogObject(
     int ObjectId,
     string Schema,
@@ -18,7 +16,6 @@ public sealed partial record CatalogObject(
     DbObjectKind Kind,
     string? Description,
     IReadOnlyList<string> Columns,
-    IReadOnlySet<string> HiddenColumns,
     long? ApproxRowCount)
 {
     public string FullName => $"{Schema}.{Name}";
@@ -34,21 +31,22 @@ public sealed partial record ObjectSchema(
     IReadOnlyList<ForeignKeyInfo> ForeignKeys,
     IReadOnlyList<DependencyInfo> DependsOn);
 
+// Returned to agents as is by describe_object; optional fields are omitted when empty.
 public sealed partial record ColumnInfo(
     string Name,
     string Type,
     bool Nullable,
-    bool Identity,
-    bool Computed,
-    string? Default,
-    string? ComputedDefinition,
-    string? Description);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Identity,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Computed,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Default,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ComputedDefinition,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Description);
 
 public sealed partial record KeyInfo(string Name, IReadOnlyList<string> Columns);
 
 public sealed partial record CheckConstraintInfo(string Name, string? Column, string? Definition, bool Disabled);
 
-/// <summary>A foreign key in either direction. Only returned when both ends are inside the object scope.</summary>
+/// <summary>A foreign key in either direction. Only returned when both ends are exposed objects.</summary>
 public sealed partial record ForeignKeyInfo(
     string Name,
     string FromObject,
@@ -59,15 +57,5 @@ public sealed partial record ForeignKeyInfo(
     string OnUpdate,
     bool Disabled);
 
-/// <summary>An object a view (or computed column) reads from. InScope says whether agents may query it.</summary>
-public sealed partial record DependencyInfo(string Name, string Type, bool InScope);
-
-public static partial class ObjectScopeExtensions
-{
-    public static bool Includes(this ObjectScope scope, DbObjectKind kind) => scope switch
-    {
-        ObjectScope.Views => kind == DbObjectKind.View,
-        ObjectScope.Tables => kind == DbObjectKind.Table,
-        _ => true,
-    };
-}
+/// <summary>An exposed object that a view (or computed column) reads from.</summary>
+public sealed partial record DependencyInfo(string Name, string Type);

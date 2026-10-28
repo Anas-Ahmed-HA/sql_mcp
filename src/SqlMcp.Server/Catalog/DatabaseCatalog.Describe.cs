@@ -4,16 +4,12 @@ using SqlMcp.Server.Data;
 
 namespace SqlMcp.Server.Catalog;
 
-// Describing one object: columns, keys, constraints, relationships and dependencies, with hidden parts removed.
+// Describing one object: columns, keys, constraints, relationships and dependencies.
 public sealed partial class DatabaseCatalog
 {
     public async Task<ObjectSchema> DescribeAsync(CatalogObject obj, CancellationToken cancellationToken = default)
     {
         var snapshot = await GetSnapshotAsync(cancellationToken);
-        var hidden = obj.HiddenColumns;
-
-        // Definitions are SQL text; drop any that mention a hidden column rather than leak its name.
-        bool MentionsHidden(string? sql) => sql is not null && hidden.Any(h => sql.Contains(h, StringComparison.OrdinalIgnoreCase));
 
         await using var connection = await _connections.OpenAsync(cancellationToken);
         await using var command = CreateCommand(connection, DescribeSql);
@@ -23,21 +19,14 @@ public sealed partial class DatabaseCatalog
         var columns = new List<ColumnInfo>();
         while (await reader.ReadAsync(cancellationToken))
         {
-            var name = reader.GetString(0);
-            if (hidden.Contains(name))
-            {
-                continue;
-            }
-
-            var computedDefinition = reader.GetStringOrNull(9);
             columns.Add(new ColumnInfo(
-                Name: name,
+                Name: reader.GetString(0),
                 Type: FormatType(reader.GetString(1), reader.GetInt16(2), reader.GetByte(3), reader.GetByte(4)),
                 Nullable: reader.GetBoolean(5),
                 Identity: reader.GetBoolean(6),
                 Computed: reader.GetBoolean(7),
                 Default: reader.GetStringOrNull(8),
-                ComputedDefinition: MentionsHidden(computedDefinition) ? null : computedDefinition,
+                ComputedDefinition: reader.GetStringOrNull(9),
                 Description: reader.GetStringOrNull(10)));
         }
 
@@ -50,7 +39,7 @@ public sealed partial class DatabaseCatalog
             keyRows.Add((reader.GetString(0), reader.GetBoolean(1), reader.GetString(2)));
         }
 
-        foreach (var key in keyRows.GroupBy(r => (r.Name, r.IsPrimary)).Where(k => !k.Any(r => hidden.Contains(r.Column))))
+        foreach (var key in keyRows.GroupBy(r => (r.Name, r.IsPrimary)))
         {
             var info = new KeyInfo(key.Key.Name, key.Select(r => r.Column).ToList());
             if (key.Key.IsPrimary)
@@ -67,12 +56,8 @@ public sealed partial class DatabaseCatalog
         var checks = new List<CheckConstraintInfo>();
         while (await reader.ReadAsync(cancellationToken))
         {
-            var check = new CheckConstraintInfo(
-                reader.GetString(0), reader.GetStringOrNull(1), reader.GetStringOrNull(2), reader.GetBoolean(3));
-            if ((check.Column is null || !hidden.Contains(check.Column)) && !MentionsHidden(check.Definition))
-            {
-                checks.Add(check);
-            }
+            checks.Add(new CheckConstraintInfo(
+                reader.GetString(0), reader.GetStringOrNull(1), reader.GetStringOrNull(2), reader.GetBoolean(3)));
         }
 
         await reader.NextResultAsync(cancellationToken);
@@ -84,16 +69,10 @@ public sealed partial class DatabaseCatalog
                 reader.GetString(7), reader.GetString(8), reader.GetBoolean(9)));
         }
 
-        // A relationship to a hidden object or through a hidden column would reveal it, so both ends must be visible.
+        // A relationship to an object that isn't exposed would reveal it, so both ends must be in the snapshot.
         var foreignKeys = fkRows
+            .Where(r => snapshot.TryGet(r.FromId, out _) && snapshot.TryGet(r.ToId, out _))
             .GroupBy(r => r.Name)
-            .Where(g =>
-            {
-                var first = g.First();
-                return snapshot.TryGet(first.FromId, out var from)
-                    && snapshot.TryGet(first.ToId, out var to)
-                    && !g.Any(r => from.HiddenColumns.Contains(r.FromCol) || to.HiddenColumns.Contains(r.ToCol));
-            })
             .Select(g =>
             {
                 var first = g.First();
@@ -103,32 +82,15 @@ public sealed partial class DatabaseCatalog
             })
             .ToList();
 
+        // Same rule for dependencies: only exposed objects are named.
         await reader.NextResultAsync(cancellationToken);
         var dependencies = new List<DependencyInfo>();
         while (await reader.ReadAsync(cancellationToken))
         {
-            var database = reader.GetStringOrNull(0);
-            var schema = reader.GetStringOrNull(1);
-            var entity = reader.GetString(2);
-            var referencedId = reader.GetInt32OrNull(3);
-
-            // Excluded objects must look like they don't exist, so they're not listed as dependencies either.
-            if (database is null && _policy.ExcludesObject(schema ?? string.Empty, entity))
+            if (snapshot.TryGet(reader.GetInt32(0), out var dependency))
             {
-                continue;
+                dependencies.Add(new DependencyInfo(dependency.FullName, dependency.Kind == DbObjectKind.View ? "view" : "table"));
             }
-
-            var name = string.Join('.', new[] { database, schema, entity }.Where(p => p is not null));
-            var type = database is not null ? "cross-database" : reader.GetStringOrNull(4) ?? "unresolved";
-            var inSnapshot = database is null && referencedId is int id && snapshot.TryGet(id, out _);
-
-            // Views not in the Allowed views whitelist don't exist for agents, so they aren't named either.
-            if (type == "view" && !inSnapshot)
-            {
-                continue;
-            }
-
-            dependencies.Add(new DependencyInfo(name, type, InScope: inSnapshot));
         }
 
         return new ObjectSchema(columns, primaryKey, uniqueKeys, checks, foreignKeys, dependencies);

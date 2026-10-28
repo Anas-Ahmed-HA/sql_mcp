@@ -11,7 +11,7 @@ public sealed partial class CatalogTools
     [McpServerTool(Name = "describe_object", Title = "Describe a table or view", ReadOnly = true, Idempotent = true, OpenWorld = false)]
     [Description(
         "Returns the schema of one table or view: columns with types and nullability, primary key, unique and " +
-        "check constraints, foreign keys in both directions, for views the objects they read from, and the " +
+        "check constraints, foreign keys in both directions, the exposed objects a view reads from, and the " +
         "object's section of the business-rules document when one exists. Call it before writing a query against the object.")]
     public async Task<DescribeObjectResult> DescribeObjectAsync(
         [Description("Object name as returned by list_objects, e.g. 'dbo.PBI_PH_Assets'. The schema can be omitted when the name is unique.")]
@@ -48,18 +48,9 @@ public sealed partial class CatalogTools
             .ToList();
 
         var notes = new List<string>();
-        if (obj.HiddenColumns.Count > 0)
-        {
-            notes.Add($"{obj.HiddenColumns.Count} column(s) of this object are hidden by server policy and cannot be queried.");
-        }
-
         if (obj.Kind == DbObjectKind.View)
         {
             notes.Add("SQL Server views have no keys or foreign keys; join conditions between views are not stored in the database.");
-            if (described.DependsOn.Count == 0)
-            {
-                notes.Add("The objects this view reads from are not visible to this login (it needs VIEW DEFINITION).");
-            }
         }
 
         if (document is not null)
@@ -72,9 +63,7 @@ public sealed partial class CatalogTools
             TypeName(obj.Kind),
             obj.Description,
             obj.ApproxRowCount,
-            described.Columns
-                .Select(c => new ColumnResult(c.Name, c.Type, c.Nullable, c.Identity, c.Computed, c.Default, c.ComputedDefinition, c.Description))
-                .ToList(),
+            described.Columns,
             described.PrimaryKey,
             described.UniqueKeys,
             described.CheckConstraints,

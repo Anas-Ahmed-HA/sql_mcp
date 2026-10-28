@@ -2,7 +2,8 @@ using SqlMcp.Server.Metadata;
 
 namespace SqlMcp.Server.Catalog;
 
-// Warnings that keep the metadata file consistent with the database (see metadata/guidelines.md).
+// All checks that keep the metadata file consistent with the database (see metadata/guidelines.md).
+// Logged at each catalog load, so mistakes show up at startup and after every edit of the file.
 public sealed partial class DatabaseCatalog
 {
     private void CheckWhitelist(ViewWhitelist whitelist, IReadOnlyList<(string Schema, string Name)> visibleObjects)
@@ -20,11 +21,9 @@ public sealed partial class DatabaseCatalog
             _logger.LogWarning("Allowed views entry '{Entry}' is not schema-qualified (schema.view); it allows nothing.", entry);
         }
 
-        foreach (var (schema, name) in whitelist.Entries.Where(e => !visibleObjects.Any(o =>
-                     string.Equals(o.Schema, e.Schema, StringComparison.OrdinalIgnoreCase) &&
-                     string.Equals(o.Name, e.Name, StringComparison.OrdinalIgnoreCase))))
+        foreach (var entry in whitelist.Entries.Where(e => !visibleObjects.Any(o => e.Matches(o.Schema, o.Name))))
         {
-            _logger.LogWarning("Allowed views entry '{Schema}.{Name}' matches no object visible to this login.", schema, name);
+            _logger.LogWarning("Allowed views entry '{Entry}' matches no object visible to this login.", entry);
         }
     }
 
@@ -44,13 +43,12 @@ public sealed partial class DatabaseCatalog
                 continue;
             }
 
-            var visible = obj.Columns.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var unknown = documented.Where(c => !visible.Contains(c)).ToList();
+            var unknown = documented.Where(c => !obj.Columns.Contains(c, StringComparer.OrdinalIgnoreCase)).ToList();
             var missing = obj.Columns.Where(c => !documented.Contains(c, StringComparer.OrdinalIgnoreCase)).ToList();
 
             if (unknown.Count > 0)
             {
-                _logger.LogWarning("{Object}: the metadata lists columns that don't exist or are hidden: {Columns}.", obj.FullName, string.Join(", ", unknown));
+                _logger.LogWarning("{Object}: the metadata lists columns that don't exist: {Columns}.", obj.FullName, string.Join(", ", unknown));
             }
 
             if (missing.Count > 0)

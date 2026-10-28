@@ -3,7 +3,7 @@ using SqlMcp.Server.Catalog;
 
 namespace SqlMcp.Server.Query;
 
-// The syntax-tree walk: resolves every table source and collects column references.
+// The syntax-tree walk: every table source must be an exposed object, and no side channels are allowed.
 public sealed partial class SelectQueryGuard
 {
     private sealed partial class Visitor(CatalogSnapshot snapshot, HashSet<string> cteNames) : TSqlFragmentVisitor
@@ -11,10 +11,6 @@ public sealed partial class SelectQueryGuard
         public string? Error { get; private set; }
 
         public List<CatalogObject> Objects { get; } = [];
-
-        public List<string> ColumnNames { get; } = [];
-
-        public bool HasSelectStar { get; private set; }
 
         private void Fail(string message) => Error ??= message;
 
@@ -45,7 +41,7 @@ public sealed partial class SelectQueryGuard
                 return;
             }
 
-            var resolution = snapshot.Resolve(schema, objectName);
+            var resolution = snapshot.Resolve(new ObjectName(schema, objectName));
             if (resolution.Match is { } obj)
             {
                 Objects.Add(obj);
@@ -56,27 +52,10 @@ public sealed partial class SelectQueryGuard
             }
             else
             {
-                // Same wording as SQL Server, so a hidden object is indistinguishable from a missing one.
+                // Same wording as SQL Server, so an object that isn't allowed is indistinguishable from a missing one.
                 Fail($"Invalid object name '{display}'.");
             }
         }
-
-        public override void Visit(ColumnReferenceExpression node)
-        {
-            switch (node.ColumnType)
-            {
-                case ColumnType.Wildcard: // COUNT(*)
-                    break;
-                case ColumnType.Regular when node.MultiPartIdentifier is { Count: > 0 } id:
-                    ColumnNames.Add(id.Identifiers[^1].Value);
-                    break;
-                default:
-                    Fail($"Column reference type {node.ColumnType} is not allowed.");
-                    break;
-            }
-        }
-
-        public override void Visit(SelectStarExpression node) => HasSelectStar = true;
 
         public override void Visit(FunctionCall node)
         {

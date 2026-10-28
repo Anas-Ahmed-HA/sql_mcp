@@ -3,13 +3,9 @@ using SqlMcp.Server.Catalog;
 
 namespace SqlMcp.Server.Tools;
 
-// Wire shapes returned to agents. Optional fields are omitted when empty to keep responses small.
+// Wire shapes returned to agents by the catalog tools. Optional fields are omitted when empty to keep responses small.
 
-public sealed partial record ListObjectsResult(
-    string Scope,
-    int Total,
-    bool Truncated,
-    IReadOnlyList<ObjectSummary> Objects);
+public sealed partial record ListObjectsResult(int Total, bool Truncated, IReadOnlyList<ObjectSummary> Objects);
 
 public sealed partial record ObjectSummary(
     string Name,
@@ -23,7 +19,7 @@ public sealed partial record DescribeObjectResult(
     string Type,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Description,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? ApproxRows,
-    IReadOnlyList<ColumnResult> Columns,
+    IReadOnlyList<ColumnInfo> Columns,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] KeyInfo? PrimaryKey,
     IReadOnlyList<KeyInfo> UniqueKeys,
     IReadOnlyList<CheckConstraintInfo> CheckConstraints,
@@ -32,16 +28,6 @@ public sealed partial record DescribeObjectResult(
     IReadOnlyList<DependencyInfo> DependsOn,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BusinessMetadata,
     IReadOnlyList<string> Notes);
-
-public sealed partial record ColumnResult(
-    string Name,
-    string Type,
-    bool Nullable,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Identity,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Computed,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Default,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ComputedDefinition,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Description);
 
 /// <summary>This object's columns point at another object's key.</summary>
 public sealed partial record OutgoingForeignKey(

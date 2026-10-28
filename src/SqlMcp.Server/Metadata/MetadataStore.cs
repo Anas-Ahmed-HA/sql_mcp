@@ -6,11 +6,11 @@ namespace SqlMcp.Server.Metadata;
 /// <summary>
 /// Reads metadata/&lt;ConnectionName&gt;.md. The file is checked on every call and re-parsed only when its
 /// timestamp or size changes, so edits apply without a restart and every instance sees the same file.
+/// Validation against the database happens in the catalog, which knows the objects.
 /// </summary>
 public sealed partial class MetadataStore : IMetadataStore
 {
     private readonly string _path;
-    private readonly DatabaseOptions _database;
     private readonly ILogger<MetadataStore> _logger;
     private volatile CacheEntry? _cached;
 
@@ -20,11 +20,8 @@ public sealed partial class MetadataStore : IMetadataStore
         IHostEnvironment environment,
         ILogger<MetadataStore> logger)
     {
-        _database = database.Value;
         _logger = logger;
-
-        // Phase 0 serves a single database; options validation guarantees exactly one entry.
-        ConnectionName = _database.ConnectionStrings.Keys.Single();
+        ConnectionName = database.Value.ConnectionName;
         var directory = Path.GetFullPath(Path.Combine(environment.ContentRootPath, options.Value.Directory));
         _path = Path.Combine(directory, ConnectionName + ".md");
     }
@@ -48,7 +45,6 @@ public sealed partial class MetadataStore : IMetadataStore
         try
         {
             var document = MetadataDocument.Parse(ConnectionName, File.ReadAllText(_path));
-            WarnAboutHiddenNames(document);
             _cached = new CacheEntry(file.LastWriteTimeUtc, file.Length, document);
             _logger.LogInformation("Loaded metadata {Path}: {Sections} sections.", _path, document.Sections.Count);
             return document;

@@ -8,9 +8,8 @@ using SqlMcp.Server.Metadata;
 namespace SqlMcp.Server.Catalog;
 
 /// <summary>
-/// Reads metadata from SQL Server's catalog views. An object is exposed only when all of these allow it:
-/// the login can see it (SQL Server's metadata visibility), the object scope includes its kind, the metadata
-/// file's Allowed views whitelist lists it, and the exclusion lists don't hide it.
+/// Reads metadata from SQL Server's catalog views. An object is exposed only when the login can see it
+/// (SQL Server's metadata visibility) and the metadata file's Allowed views whitelist lists it.
 /// </summary>
 public sealed partial class DatabaseCatalog(
     ISqlConnectionFactory connections,
@@ -26,7 +25,6 @@ public sealed partial class DatabaseCatalog(
     private readonly IMetadataStore _metadata = metadata;
     private readonly DatabaseOptions _options = options.Value;
     private readonly ILogger<DatabaseCatalog> _logger = logger;
-    private readonly ExclusionPolicy _policy = new(options.Value);
 
     public async Task<CatalogSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
     {
@@ -45,8 +43,6 @@ public sealed partial class DatabaseCatalog(
 
     private async Task<CatalogSnapshot> LoadSnapshotAsync(MetadataDocument? document, CancellationToken cancellationToken)
     {
-        var scope = _options.ObjectScope;
-
         await using var connection = await _connections.OpenAsync(cancellationToken);
         await using var command = CreateCommand(connection, ObjectsSql);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -76,52 +72,19 @@ public sealed partial class DatabaseCatalog(
             list.Add(reader.GetString(1));
         }
 
-        IReadOnlyList<string> ColumnsOf(int id) => columnsById.TryGetValue(id, out var list) ? list : [];
-
-        // Checked against every object, not just the in-scope ones, so an entry for an out-of-scope object isn't flagged.
-        foreach (var problem in _policy.FindIneffectiveEntries(rows.Select(r => (r.Schema, r.Name, ColumnsOf(r.Id))).ToList()))
-        {
-            _logger.LogWarning("Exclusion entry has no effect: {Problem}. Check the spelling; nothing is hidden by it.", problem);
-        }
-
         var whitelist = new ViewWhitelist(document?.AllowedViews);
         CheckWhitelist(whitelist, rows.Select(r => (r.Schema, r.Name)).ToList());
 
-        var objects = new List<CatalogObject>();
-        var notAllowed = 0;
-        var excludedObjects = 0;
-        var hiddenColumns = 0;
-        foreach (var row in rows)
-        {
-            if (!scope.Includes(row.Kind))
-            {
-                continue;
-            }
-
-            if (!whitelist.Allows(row.Schema, row.Name))
-            {
-                notAllowed++;
-                continue;
-            }
-
-            if (_policy.ExcludesObject(row.Schema, row.Name))
-            {
-                excludedObjects++;
-                continue;
-            }
-
-            var all = ColumnsOf(row.Id);
-            var hidden = _policy.HiddenColumns(row.Schema, row.Name, all);
-            hiddenColumns += hidden.Count;
-
-            objects.Add(new CatalogObject(
-                row.Id, row.Schema, row.Name, row.Kind, row.Description,
-                all.Where(c => !hidden.Contains(c)).ToList(), hidden, row.ApproxRows));
-        }
+        var objects = rows
+            .Where(r => whitelist.Allows(r.Schema, r.Name))
+            .Select(r => new CatalogObject(
+                r.Id, r.Schema, r.Name, r.Kind, r.Description,
+                columnsById.TryGetValue(r.Id, out var columns) ? columns : [], r.ApproxRows))
+            .ToList();
 
         _logger.LogInformation(
-            "Catalog loaded: {Count} objects exposed (scope {Scope}; {NotAllowed} not in Allowed views, {ExcludedObjects} excluded, {HiddenColumns} columns hidden).",
-            objects.Count, scope, notAllowed, excludedObjects, hiddenColumns);
+            "Catalog loaded: {Count} of {Visible} objects visible to this login are exposed by Allowed views.",
+            objects.Count, rows.Count);
 
         CheckDocumentedColumns(document, objects);
         return new CatalogSnapshot(objects);

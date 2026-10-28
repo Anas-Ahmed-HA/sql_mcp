@@ -10,8 +10,7 @@ public sealed partial class SqlConnectionFactory : ISqlConnectionFactory
 
     public SqlConnectionFactory(IOptions<DatabaseOptions> options)
     {
-        // Phase 0 serves a single database; options validation guarantees exactly one entry.
-        var builder = new SqlConnectionStringBuilder(options.Value.ConnectionStrings.Values.Single())
+        var builder = new SqlConnectionStringBuilder(options.Value.ConnectionString)
         {
             // Shows up in sys.dm_exec_sessions and audit logs, so DBAs can tell MCP traffic apart.
             ApplicationName = "AI_SqlMCP",
