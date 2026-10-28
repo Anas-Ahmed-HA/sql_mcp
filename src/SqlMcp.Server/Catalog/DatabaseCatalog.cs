@@ -9,7 +9,8 @@ namespace SqlMcp.Server.Catalog;
 
 /// <summary>
 /// Reads metadata from SQL Server's catalog views. An object is exposed only when the login can see it
-/// (SQL Server's metadata visibility) and the metadata file's Allowed views whitelist lists it.
+/// (SQL Server's metadata visibility) and the database's metadata file lists it under Allowed views.
+/// Each database has its own connection, metadata file, whitelist and cached snapshot.
 /// </summary>
 public sealed partial class DatabaseCatalog(
     ISqlConnectionFactory connections,
@@ -18,32 +19,31 @@ public sealed partial class DatabaseCatalog(
     IOptions<DatabaseOptions> options,
     ILogger<DatabaseCatalog> logger) : IDatabaseCatalog
 {
-    private const string SnapshotCacheKey = "catalog:snapshot";
-
     private readonly ISqlConnectionFactory _connections = connections;
     private readonly IMemoryCache _cache = cache;
     private readonly IMetadataStore _metadata = metadata;
     private readonly DatabaseOptions _options = options.Value;
     private readonly ILogger<DatabaseCatalog> _logger = logger;
 
-    public async Task<CatalogSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
+    public async Task<CatalogSnapshot> GetSnapshotAsync(string database, CancellationToken cancellationToken = default)
     {
         // The whitelist lives in the metadata file, which can change at any time. The store hands out the same
         // document instance until the file changes, so a different instance means the snapshot is stale.
-        var document = _metadata.GetDocument();
-        if (_cache.TryGetValue(SnapshotCacheKey, out SnapshotEntry? cached) && ReferenceEquals(cached!.Source, document))
+        var cacheKey = $"catalog:snapshot:{database}";
+        var document = _metadata.GetDocument(database);
+        if (_cache.TryGetValue(cacheKey, out SnapshotEntry? cached) && ReferenceEquals(cached!.Source, document))
         {
             return cached.Snapshot;
         }
 
-        var snapshot = await LoadSnapshotAsync(document, cancellationToken);
-        _cache.Set(SnapshotCacheKey, new SnapshotEntry(snapshot, document), TimeSpan.FromMinutes(_options.CatalogCacheMinutes));
+        var snapshot = await LoadSnapshotAsync(database, document, cancellationToken);
+        _cache.Set(cacheKey, new SnapshotEntry(snapshot, document), TimeSpan.FromMinutes(_options.CatalogCacheMinutes));
         return snapshot;
     }
 
-    private async Task<CatalogSnapshot> LoadSnapshotAsync(MetadataDocument? document, CancellationToken cancellationToken)
+    private async Task<CatalogSnapshot> LoadSnapshotAsync(string database, MetadataDocument? document, CancellationToken cancellationToken)
     {
-        await using var connection = await _connections.OpenAsync(cancellationToken);
+        await using var connection = await _connections.OpenAsync(database, cancellationToken);
         await using var command = CreateCommand(connection, ObjectsSql);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
@@ -73,7 +73,7 @@ public sealed partial class DatabaseCatalog(
         }
 
         var whitelist = new ViewWhitelist(document?.AllowedViews);
-        CheckWhitelist(whitelist, rows.Select(r => (r.Schema, r.Name)).ToList());
+        CheckWhitelist(database, whitelist, rows.Select(r => (r.Schema, r.Name)).ToList());
 
         var objects = rows
             .Where(r => whitelist.Allows(r.Schema, r.Name))
@@ -83,10 +83,10 @@ public sealed partial class DatabaseCatalog(
             .ToList();
 
         _logger.LogInformation(
-            "Catalog loaded: {Count} of {Visible} objects visible to this login are exposed by Allowed views.",
-            objects.Count, rows.Count);
+            "Catalog of {Database} loaded: {Count} of {Visible} objects visible to this login are exposed by Allowed views.",
+            database, objects.Count, rows.Count);
 
-        CheckDocumentedColumns(document, objects);
+        CheckDocumentedColumns(database, document, objects);
         return new CatalogSnapshot(objects);
     }
 

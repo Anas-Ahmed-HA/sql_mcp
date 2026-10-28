@@ -37,6 +37,14 @@ public partial class MetadataDocumentTests
     private static readonly MetadataDocument Document = MetadataDocument.Parse("Db", Sample);
 
     [Fact]
+    public void Summary_is_the_text_under_the_title()
+    {
+        Assert.Equal("Intro.", Document.Summary);
+        Assert.Null(MetadataDocument.Parse("Db", "# Db\n\n## Allowed views\n").Summary);
+        Assert.Null(MetadataDocument.Parse("Db", "No title.").Summary);
+    }
+
+    [Fact]
     public void Finds_headings_but_not_lines_inside_code_fences()
     {
         Assert.Equal(

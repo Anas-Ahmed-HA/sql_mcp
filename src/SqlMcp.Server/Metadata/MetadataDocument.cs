@@ -15,17 +15,21 @@ public sealed partial class MetadataDocument
     public const string AllowedViewsHeading = "Allowed views";
     public const string ColumnsHeading = "Columns";
 
-    private MetadataDocument(string connectionName, string markdown, IReadOnlyList<MetadataSection> sections)
+    private MetadataDocument(string connectionName, string markdown, IReadOnlyList<MetadataSection> sections, string? summary)
     {
         ConnectionName = connectionName;
         Markdown = markdown;
         Sections = sections;
+        Summary = summary;
         AllowedViews = ReadAllowedViews();
     }
 
     public string ConnectionName { get; }
 
     public string Markdown { get; }
+
+    /// <summary>The text under the "# &lt;database&gt;" title: what the database is for. Null when there is none.</summary>
+    public string? Summary { get; }
 
     public IReadOnlyList<MetadataSection> Sections { get; }
 

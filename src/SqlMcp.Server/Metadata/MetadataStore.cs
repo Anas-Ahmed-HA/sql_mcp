@@ -1,42 +1,37 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Options;
 using SqlMcp.Server.Configuration;
 
 namespace SqlMcp.Server.Metadata;
 
 /// <summary>
-/// Reads metadata/&lt;ConnectionName&gt;.md. The file is checked on every call and re-parsed only when its
-/// timestamp or size changes, so edits apply without a restart and every instance sees the same file.
+/// Reads metadata/&lt;database&gt;.md, one file per database. A file is checked on every call and re-parsed only
+/// when its timestamp or size changes, so edits apply without a restart and every instance sees the same file.
 /// Validation against the database happens in the catalog, which knows the objects.
 /// </summary>
 public sealed partial class MetadataStore : IMetadataStore
 {
-    private readonly string _path;
+    private readonly string _directory;
     private readonly ILogger<MetadataStore> _logger;
-    private volatile CacheEntry? _cached;
+    private readonly ConcurrentDictionary<string, CacheEntry> _cached = new(StringComparer.OrdinalIgnoreCase);
 
-    public MetadataStore(
-        IOptions<MetadataOptions> options,
-        IOptions<DatabaseOptions> database,
-        IHostEnvironment environment,
-        ILogger<MetadataStore> logger)
+    public MetadataStore(IOptions<MetadataOptions> options, IHostEnvironment environment, ILogger<MetadataStore> logger)
     {
         _logger = logger;
-        ConnectionName = database.Value.ConnectionName;
-        var directory = Path.GetFullPath(Path.Combine(environment.ContentRootPath, options.Value.Directory));
-        _path = Path.Combine(directory, ConnectionName + ".md");
+        _directory = Path.GetFullPath(Path.Combine(environment.ContentRootPath, options.Value.Directory));
     }
 
-    public string ConnectionName { get; }
-
-    public MetadataDocument? GetDocument()
+    public MetadataDocument? GetDocument(string database)
     {
-        var file = new FileInfo(_path);
+        // Database names are validated at startup (letters, digits, _ . -), so this stays inside the folder.
+        var path = Path.Combine(_directory, database + ".md");
+        var file = new FileInfo(path);
         if (!file.Exists)
         {
             return null;
         }
 
-        var cached = _cached;
+        var cached = _cached.GetValueOrDefault(database);
         if (cached is not null && cached.LastWriteUtc == file.LastWriteTimeUtc && cached.Length == file.Length)
         {
             return cached.Document;
@@ -44,15 +39,15 @@ public sealed partial class MetadataStore : IMetadataStore
 
         try
         {
-            var document = MetadataDocument.Parse(ConnectionName, File.ReadAllText(_path));
-            _cached = new CacheEntry(file.LastWriteTimeUtc, file.Length, document);
-            _logger.LogInformation("Loaded metadata {Path}: {Sections} sections.", _path, document.Sections.Count);
+            var document = MetadataDocument.Parse(database, File.ReadAllText(path));
+            _cached[database] = new CacheEntry(file.LastWriteTimeUtc, file.Length, document);
+            _logger.LogInformation("Loaded metadata {Path}: {Sections} sections.", path, document.Sections.Count);
             return document;
         }
         catch (IOException ex)
         {
             // Most likely the file is being saved right now; serve the previous version until the next call.
-            _logger.LogWarning(ex, "Could not read metadata {Path}; using the previous version.", _path);
+            _logger.LogWarning(ex, "Could not read metadata {Path}; using the previous version.", path);
             return cached?.Document;
         }
     }

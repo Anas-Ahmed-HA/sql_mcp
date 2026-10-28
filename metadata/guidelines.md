@@ -12,7 +12,7 @@ Follow this standard exactly: the server finds sections by their headings.
 
 | # | Heading | Required | Content |
 |---|---|---|---|
-| 1 | `# <ConnectionName>` | yes | One or two sentences: what this database is for |
+| 1 | `# <ConnectionName>` | yes | One or two sentences: what this database is for. `list_databases` shows this text, so agents pick the database from it |
 | 2 | `## Allowed views` | yes | The views agents may use (enforced) |
 | 3 | `## <schema>.<view>` | yes, one per allowed view | Same order as the Allowed views table |
 | 3a | `### Columns` | yes | Every column of the view, with a description |
@@ -33,7 +33,7 @@ Follow this standard exactly: the server finds sections by their headings.
 
 - **This is a whitelist.** The server exposes only the views in this table. Every tool treats any other view
   as if it doesn't exist.
-- **It's the only access control** in the server. A listed view must also be visible to the database login.
+- **It's the only object-level access control** in the server, and it applies to this database only. A listed view must also be visible to the database login.
   Every column of a listed view can be queried; to keep a column away from agents, whitelist a view (created in
   the database) that doesn't select it.
 - **Use exact, schema-qualified names:** `dbo.PBI_PH_Assets`, not `PBI_PH_Assets`. The server logs a warning

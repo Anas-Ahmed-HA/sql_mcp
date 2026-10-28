@@ -1,5 +1,7 @@
-﻿using Microsoft.Extensions.Configuration.EnvironmentVariables;
+﻿using System.Threading.RateLimiting;
+using Microsoft.Extensions.Configuration.EnvironmentVariables;
 using Microsoft.Extensions.Configuration.Json;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol;
 using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Protocol;
@@ -30,8 +32,8 @@ sources.Insert(
 builder.Services.AddOptions<DatabaseOptions>()
     .Bind(builder.Configuration.GetSection(DatabaseOptions.SectionName))
     .Validate(
-        o => o.ConnectionStrings.Count == 1 && !string.IsNullOrWhiteSpace(o.ConnectionString),
-        "Phase 0 expects exactly one non-empty entry under Database:ConnectionStrings.")
+        o => o.IsValid(),
+        "Database:ConnectionStrings needs at least one entry; names may only use letters, digits, '_', '.' and '-', and no value may be empty.")
     .ValidateOnStart();
 
 builder.Services.AddOptions<QueryOptions>()
@@ -43,27 +45,50 @@ builder.Services.AddOptions<QueryOptions>()
 builder.Services.AddOptions<MetadataOptions>()
     .Bind(builder.Configuration.GetSection(MetadataOptions.SectionName));
 
+builder.Services.AddOptions<RateLimitOptions>()
+    .Bind(builder.Configuration.GetSection(RateLimitOptions.SectionName))
+    .Validate(o => o.RequestsPerMinute >= 1, "RateLimit:RequestsPerMinute must be at least 1.")
+    .ValidateOnStart();
+
 builder.Services.AddSingleton<ISqlConnectionFactory, SqlConnectionFactory>();
 builder.Services.AddSingleton<IDatabaseCatalog, DatabaseCatalog>();
 builder.Services.AddSingleton<SelectQueryGuard>();
 builder.Services.AddSingleton<SelectQueryExecutor>();
 builder.Services.AddSingleton<IAuditLog, JsonFileAuditLog>();
 builder.Services.AddSingleton<ICallerContext, HttpCallerContext>();
+builder.Services.AddSingleton<IDatabaseAccess, AllDatabasesAccess>();
 builder.Services.AddSingleton<IMetadataStore, MetadataStore>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddMemoryCache();
 builder.Services.AddHostedService<DatabaseStartupCheck>();
-builder.Services.AddHealthChecks();
+builder.Services.AddHealthChecks().AddCheck<DatabaseHealthCheck>("database");
+
+const string McpRateLimit = "mcp";
+
+// Without auth anyone on the network can call the tools, so one looping agent must not be able to keep
+// the database busy. The IP is the only caller identity until auth lands.
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    o.AddPolicy(McpRateLimit, context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = context.RequestServices.GetRequiredService<IOptions<RateLimitOptions>>().Value.RequestsPerMinute,
+            Window = TimeSpan.FromMinutes(1),
+        }));
+});
 
 builder.Services
     .AddMcpServer(o =>
     {
-        o.ServerInfo = new() { Name = "ai-sql-mcp", Version = "0.3.0" };
+        o.ServerInfo = new() { Name = "ai-sql-mcp", Version = "0.4.0" };
         o.ServerInstructions =
-            "Read-only access to a SQL Server database. First call get_business_rules for what the data means and " +
-            "how views join, then list_objects to see the available tables/views, describe_object for the columns " +
-            "of an object, and run_select with a single T-SQL SELECT. Prefer aggregates (COUNT, GROUP BY) over " +
-            "fetching raw rows.";
+            "Read-only access to several SQL Server databases. First call list_databases, then pass one of its names " +
+            "as 'database' to every other tool: get_business_rules for what the data means and how views join, " +
+            "list_objects for the available tables/views, describe_object for the columns of an object, and " +
+            "run_select with a single T-SQL SELECT. Each database is separate: a query reads one database only. " +
+            "Prefer aggregates (COUNT, GROUP BY) over fetching raw rows.";
     })
     .WithHttpTransport(o =>
     {
@@ -88,9 +113,11 @@ builder.Services
 
 var app = builder.Build();
 
+app.UseRateLimiter();
+
 app.MapHealthChecks("/health");
 
 // No authentication yet: keep this behind a trusted network until the auth layer lands.
-app.MapMcp("/mcp");
+app.MapMcp("/mcp").RequireRateLimiting(McpRateLimit);
 
 app.Run();

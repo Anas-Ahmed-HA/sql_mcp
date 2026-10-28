@@ -7,11 +7,11 @@ namespace SqlMcp.Server.Catalog;
 // Describing one object: columns, keys, constraints, relationships and dependencies.
 public sealed partial class DatabaseCatalog
 {
-    public async Task<ObjectSchema> DescribeAsync(CatalogObject obj, CancellationToken cancellationToken = default)
+    public async Task<ObjectSchema> DescribeAsync(string database, CatalogObject obj, CancellationToken cancellationToken = default)
     {
-        var snapshot = await GetSnapshotAsync(cancellationToken);
+        var snapshot = await GetSnapshotAsync(database, cancellationToken);
 
-        await using var connection = await _connections.OpenAsync(cancellationToken);
+        await using var connection = await _connections.OpenAsync(database, cancellationToken);
         await using var command = CreateCommand(connection, DescribeSql);
         command.Parameters.Add(new SqlParameter("@id", SqlDbType.Int) { Value = obj.ObjectId });
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

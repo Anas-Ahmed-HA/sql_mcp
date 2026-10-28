@@ -44,7 +44,12 @@ public sealed partial class MetadataDocument
             sections.Add(new MetadataSection(title, level, string.Join('\n', lines[start..end]).TrimEnd()));
         }
 
-        return new MetadataDocument(connectionName, markdown, sections);
+        // The text under the "# <database>" title, before the first subsection: what the database is for.
+        var summary = headings is [{ Level: 1 } first, ..]
+            ? string.Join('\n', lines[(first.Line + 1)..(headings.Count > 1 ? headings[1].Line : lines.Length)]).Trim()
+            : string.Empty;
+
+        return new MetadataDocument(connectionName, markdown, sections, summary.Length > 0 ? summary : null);
     }
 
     [GeneratedRegex(@"^(#{1,6})\s+(.+?)\s*#*\s*$")]

@@ -8,5 +8,7 @@ namespace SqlMcp.Server.Data;
 /// </summary>
 public interface ISqlConnectionFactory
 {
-    Task<SqlConnection> OpenAsync(CancellationToken cancellationToken = default);
+    /// <summary>Opens a connection with the named database's own connection string.</summary>
+    /// <param name="database">A configured name, as returned by <see cref="Security.IDatabaseAccess.Resolve"/>.</param>
+    Task<SqlConnection> OpenAsync(string database, CancellationToken cancellationToken = default);
 }

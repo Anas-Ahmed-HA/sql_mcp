@@ -8,9 +8,11 @@ public sealed partial class CatalogTools
 {
     [McpServerTool(Name = "list_objects", Title = "List tables and views", ReadOnly = true, Idempotent = true, OpenWorld = false)]
     [Description(
-        "Lists the tables and/or views available on this server, with descriptions, column counts and " +
-        "approximate row counts for tables. Start here, then call describe_object before querying an object.")]
+        "Lists the tables and/or views available in one database, with descriptions, column counts and " +
+        "approximate row counts for tables. Call describe_object before querying an object.")]
     public async Task<ListObjectsResult> ListObjectsAsync(
+        [Description(ToolDescriptions.Database)]
+        string database,
         [Description("Which object types to list: 'views', 'tables' or 'all'.")]
         string kind = "all",
         [Description("Only objects in this schema, e.g. 'dbo'.")]
@@ -20,7 +22,7 @@ public sealed partial class CatalogTools
         CancellationToken cancellationToken = default)
     {
         var requested = ParseKind(kind);
-        var snapshot = await _catalog.GetSnapshotAsync(cancellationToken);
+        var snapshot = await _catalog.GetSnapshotAsync(_access.Resolve(database), cancellationToken);
         var matches = snapshot.Objects
             .Where(o => requested is null || o.Kind == requested)
             .Where(o => string.IsNullOrWhiteSpace(schema) || o.Schema.Equals(schema.Trim(), StringComparison.OrdinalIgnoreCase))

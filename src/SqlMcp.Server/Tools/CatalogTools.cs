@@ -2,15 +2,17 @@ using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using SqlMcp.Server.Catalog;
 using SqlMcp.Server.Metadata;
+using SqlMcp.Server.Security;
 
 namespace SqlMcp.Server.Tools;
 
 /// <summary>Catalog tools: list_objects and describe_object (one file per tool).</summary>
 [McpServerToolType]
-public sealed partial class CatalogTools(IDatabaseCatalog catalog, IMetadataStore metadata)
+public sealed partial class CatalogTools(IDatabaseAccess access, IDatabaseCatalog catalog, IMetadataStore metadata)
 {
     private const int MaxListedObjects = 500;
 
+    private readonly IDatabaseAccess _access = access;
     private readonly IDatabaseCatalog _catalog = catalog;
     private readonly IMetadataStore _metadata = metadata;
 

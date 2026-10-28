@@ -18,9 +18,9 @@ public sealed partial class SelectQueryExecutor(
     private readonly DatabaseOptions _database = database.Value;
     private readonly QueryOptions _query = query.Value;
 
-    public async Task<QueryResult> ExecuteAsync(string validatedSql, int maxRows, CancellationToken cancellationToken)
+    public async Task<QueryResult> ExecuteAsync(string database, string validatedSql, int maxRows, CancellationToken cancellationToken)
     {
-        await using var connection = await _connections.OpenAsync(cancellationToken);
+        await using var connection = await _connections.OpenAsync(database, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = validatedSql;
         command.CommandTimeout = _database.CommandTimeoutSeconds;

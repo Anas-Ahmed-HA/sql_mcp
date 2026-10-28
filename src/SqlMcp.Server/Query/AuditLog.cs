@@ -11,6 +11,7 @@ public sealed partial record AuditEntry(
     DateTimeOffset Timestamp,
     string Tool,
     CallerInfo Caller,
+    string Database,
     string Sql,
     string Outcome,
     string? Detail,
@@ -50,8 +51,8 @@ public sealed partial class JsonFileAuditLog : IAuditLog
     public async Task WriteAsync(AuditEntry entry)
     {
         _logger.LogInformation(
-            "Audit {Tool} {Outcome} from {Ip}: {Rows} rows in {ElapsedMs} ms {Detail}",
-            entry.Tool, entry.Outcome, entry.Caller.IpAddress ?? "unknown", entry.Rows ?? 0, entry.ElapsedMs, entry.Detail);
+            "Audit {Tool} {Outcome} on {Database} from {Ip}: {Rows} rows in {ElapsedMs} ms {Detail}",
+            entry.Tool, entry.Outcome, entry.Database, entry.Caller.IpAddress ?? "unknown", entry.Rows ?? 0, entry.ElapsedMs, entry.Detail);
 
         var path = Path.Combine(_directory, $"audit-{entry.Timestamp:yyyy-MM-dd}.jsonl");
         var line = JsonSerializer.Serialize(entry, JsonOptions) + Environment.NewLine;

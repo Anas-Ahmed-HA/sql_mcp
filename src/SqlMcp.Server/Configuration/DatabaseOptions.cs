@@ -1,17 +1,19 @@
+using System.Text.RegularExpressions;
+
 namespace SqlMcp.Server.Configuration;
 
 /// <summary>
 /// Bound from the "Database" configuration section. Which objects agents may use is decided only by the
-/// Allowed views table in the connection's metadata file (see metadata/guidelines.md), not here.
+/// Allowed views table in each database's metadata file (see metadata/guidelines.md), not here.
 /// </summary>
 public sealed partial class DatabaseOptions
 {
     public const string SectionName = "Database";
 
     /// <summary>
-    /// Named connection strings, one per database (key = logical database name, also the metadata file name).
-    /// Phase 0 serves exactly one. Each should authenticate as a read-only principal
-    /// (see sql/01_create_readonly_principal.sql).
+    /// Named connection strings, one per database. The key is the name agents pass as <c>database</c> and the
+    /// metadata file name (&lt;name&gt;.md). Each should authenticate as a read-only principal that can only
+    /// reach its own database (see sql/01_create_readonly_principal.sql).
     /// </summary>
     public Dictionary<string, string> ConnectionStrings { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -20,10 +22,11 @@ public sealed partial class DatabaseOptions
     /// <summary>How long the list of objects is cached before it is re-read from the database.</summary>
     public int CatalogCacheMinutes { get; set; } = 10;
 
-    // Phase 0 serves a single database; options validation guarantees exactly one entry.
-    // These are the only places that assumption is made.
+    /// <summary>At least one database, none empty, and every name usable as a file name.</summary>
+    public bool IsValid() =>
+        ConnectionStrings.Count > 0 &&
+        ConnectionStrings.All(c => ValidName().IsMatch(c.Key) && !string.IsNullOrWhiteSpace(c.Value));
 
-    public string ConnectionName => ConnectionStrings.Keys.Single();
-
-    public string ConnectionString => ConnectionStrings.Values.Single();
+    [GeneratedRegex(@"^[A-Za-z0-9_.-]+$")]
+    private static partial Regex ValidName();
 }

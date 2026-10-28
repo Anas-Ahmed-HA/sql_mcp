@@ -56,17 +56,21 @@ instance for testing, override the port with the `Urls` environment variable or 
    or metadata text.
 2. **All agent SQL goes through `SelectQueryGuard`** before `SelectQueryExecutor` runs it. Never execute
    unvalidated text.
-3. **The Allowed views whitelist is the only access control.** The `## Allowed views` table in
-   `metadata/<ConnectionName>.md` (format: [metadata/guidelines.md](metadata/guidelines.md)) decides which
+3. **Every tool resolves `database` through `IDatabaseAccess` before anything else**, and uses only that
+   database's connection, metadata file and catalog. Databases never share a snapshot or a connection, and a
+   query never names another database (the guard rejects it). Unknown and not-allowed databases get the same
+   "not found" wording.
+4. **The Allowed views whitelist is the only object access control.** The `## Allowed views` table in
+   each database's `metadata/<ConnectionName>.md` (format: [metadata/guidelines.md](metadata/guidelines.md)) decides which
    objects exist for agents. It fails closed: no file or no table means nothing is exposed. Don't add other
    object or column filters; a column that must stay away from agents belongs in a narrower database view.
    Everything else in the metadata files is explanation and is never used for access control.
-4. **Not allowed must look like missing.** The catalog snapshot only contains whitelisted objects. Anything
+5. **Not allowed must look like missing.** The catalog snapshot only contains whitelisted objects. Anything
    else gets SQL Server's own wording (`Invalid object name '…'.`) and never appears in keys, relationships
    or dependencies.
-5. **No secrets in Git.** Connection strings with passwords go in `src/SqlMcp.Server/appsettings.Local.json`
+6. **No secrets in Git.** Connection strings with passwords go in `src/SqlMcp.Server/appsettings.Local.json`
    (gitignored) or environment variables. `appsettings.json` keeps empty values.
-6. **Every `run_select` call is audited**, including rejected and failed ones.
+7. **Every `run_select` call is audited**, including rejected and failed ones, with its database.
 
 ## Tests
 

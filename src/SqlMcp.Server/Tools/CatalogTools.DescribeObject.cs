@@ -14,11 +14,14 @@ public sealed partial class CatalogTools
         "check constraints, foreign keys in both directions, the exposed objects a view reads from, and the " +
         "object's section of the business-rules document when one exists. Call it before writing a query against the object.")]
     public async Task<DescribeObjectResult> DescribeObjectAsync(
+        [Description(ToolDescriptions.Database)]
+        string database,
         [Description("Object name as returned by list_objects, e.g. 'dbo.PBI_PH_Assets'. The schema can be omitted when the name is unique.")]
         string name,
         CancellationToken cancellationToken = default)
     {
-        var snapshot = await _catalog.GetSnapshotAsync(cancellationToken);
+        var db = _access.Resolve(database);
+        var snapshot = await _catalog.GetSnapshotAsync(db, cancellationToken);
         var resolution = snapshot.Resolve(name);
 
         if (resolution.IsInvalid)
@@ -33,8 +36,8 @@ public sealed partial class CatalogTools
                 : new McpException($"Object '{name}' was not found. Use list_objects to see the available objects.");
         }
 
-        var described = await _catalog.DescribeAsync(obj, cancellationToken);
-        var document = _metadata.GetDocument();
+        var described = await _catalog.DescribeAsync(db, obj, cancellationToken);
+        var document = _metadata.GetDocument(db);
         var businessMetadata = document?.FindObjectSection(obj.Schema, obj.Name)?.Markdown;
 
         var references = described.ForeignKeys
