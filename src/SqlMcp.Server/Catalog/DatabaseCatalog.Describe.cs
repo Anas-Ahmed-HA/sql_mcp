@@ -120,9 +120,15 @@ public sealed partial class DatabaseCatalog
 
             var name = string.Join('.', new[] { database, schema, entity }.Where(p => p is not null));
             var type = database is not null ? "cross-database" : reader.GetStringOrNull(4) ?? "unresolved";
+            var inSnapshot = database is null && referencedId is int id && snapshot.TryGet(id, out _);
 
-            dependencies.Add(new DependencyInfo(
-                name, type, InScope: database is null && referencedId is int id && snapshot.TryGet(id, out _)));
+            // Views not in the Allowed views whitelist don't exist for agents, so they aren't named either.
+            if (type == "view" && !inSnapshot)
+            {
+                continue;
+            }
+
+            dependencies.Add(new DependencyInfo(name, type, InScope: inSnapshot));
         }
 
         return new ObjectSchema(columns, primaryKey, uniqueKeys, checks, foreignKeys, dependencies);

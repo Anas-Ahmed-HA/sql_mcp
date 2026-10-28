@@ -1,98 +1,76 @@
 # Apps_InformationTechnology
 
-Business rules and relationships for the `Apps_InformationTechnology` database, for agents querying it
-through AI_SqlMCP. This file explains the data; it does not control access.
-
-**How to read the markers:**
-- *Measured (date):* counted in the data on that date. Can change as data changes.
-- *Unconfirmed:* inferred from names, types or data; the data owner has not confirmed it yet.
-- No marker: confirmed by the data owner.
-
-## Purpose
-
 IT asset management for Hassan Allam companies: which IT assets exist (monitors, PCs, laptops, phones,
-network gear, …), who or where they're assigned to, plus employee, department and project reference data
-and an item-catalog duplicate report.
+network gear, …) and who or where they're assigned to.
 
-*Owner: TODO (name / team).*
+## Allowed views
 
-## Objects
+| View | Description |
+|---|---|
+| dbo.PBI_PH_Assets | One row per IT asset, with model, brand, type, company, project, department and assigned employee already resolved |
 
-### dbo.PBI_PH_Assets
+## dbo.PBI_PH_Assets
 
-One row per IT asset, already joined with model, brand, type, company, project, department and assigned
-employee names (built for Power BI). 16,348 rows *(measured 2026-10-28)*.
+One row is one physical IT asset. Built for Power BI, so names are already joined in. 16,348 rows as of
+2026-10-28.
 
-- `ID`: asset identifier.
-- `typename`: asset type. Largest groups: Monitor 5,153; PC 4,996; Laptop 3,679; IP Phone 680; Printer 416
-  *(measured 2026-10-28)*. 65 rows have an empty type.
-- `AssignType`: what the asset is assigned to. See *Codes and values*.
-- `Assined_HRCode` (sic, misspelled in the source): HR code of the assigned employee, when `AssignType = 'Emp'`.
-- `Empname`, `Department_Name`, `ProjectName`, `Company`: names already resolved for reporting, so for most
-  questions no join is needed.
-- `Is_Active`: every row is currently 1 *(measured 2026-10-28)*, so it doesn't separate active from retired
-  assets today. *Unconfirmed:* whether retired assets are removed from the view rather than flagged.
-- `Unit_Price`, `Unit_Tax`, `Unit_TotalPrice`: often empty. Don't sum them as asset value without checking
-  how many are filled.
-- `Warranty`: warranty end date. `AssinDate` (sic): assignment date.
+### Columns
 
-### dbo.V_TWEBWF_Employee
+| Column | Description |
+|---|---|
+| ID | Asset ID, unique per row |
+| DeliveryDet_ID | Delivery line the asset arrived on (unconfirmed) |
+| Delivery_ID | Delivery the asset arrived on (unconfirmed) |
+| PO_No | Purchase order number (unconfirmed) |
+| Location_ID | Location the asset is assigned to, when `AssignType = 'Loc'` (unconfirmed) |
+| Assined_HRCode | HR code of the employee the asset is assigned to, when `AssignType = 'Emp'`. Name misspelled in the source |
+| Warranty | Warranty end date |
+| AssinDate | Date the asset was assigned. Name misspelled in the source |
+| BarCodeNo | Numeric part of the barcode (unconfirmed) |
+| BarCode | Asset barcode label, e.g. `HACIP0294` |
+| SerialNo | Manufacturer serial number |
+| Model_ID | Model ID; the name is in `Modelname` |
+| Unit_Price | Purchase price per unit; often empty |
+| Unit_Tax | Tax per unit; often empty |
+| Unit_TotalPrice | Price per unit including tax; often empty |
+| DescGroup_ID | Description group ID (unconfirmed) |
+| Comment | Free-text comment |
+| Is_Active | Active flag; 1 on every row as of 2026-10-28 |
+| In_User | User who created the record |
+| In_Date | When the record was created |
+| Up_User | User who last updated the record |
+| Up_Date | When the record was last updated |
+| AssignType | What the asset is assigned to: `Emp` = an employee, `Loc` = a location, empty = not recorded |
+| Modelname | Model name, e.g. `CP-7841` |
+| Brandname | Brand name, e.g. `CISCO`, `Dell`, `HP` |
+| Company | Company the asset belongs to (unconfirmed: owning company or the assigned employee's company) |
+| Shortcut | Company short code (unconfirmed) |
+| Empname | Name of the assigned employee |
+| typename | Asset type: `Monitor`, `PC`, `Laptop`, `IP Phone`, `Printer`, `Access Point`, `Switch`, `Server`, … |
+| ProjectName | Project the asset is recorded under |
+| Department_Name | Department the asset is recorded under |
+| Isstore | Whether the asset is in a store room (unconfirmed); 0 or empty on every row as of 2026-10-28 |
 
-One row per employee record: 28,470 rows *(measured 2026-10-28)*. Key: `User_HR_Code`.
-Contains personal data; see *Sensitive data*.
+### Business rules
 
-- `IsActive`, `Status`, `Account_Status`: employment / account state. *Unconfirmed:* which one defines a
-  current employee. Use it as a filter when counting current staff.
-- `Department_ID`, `Project_ID`, `Location_ID`, `Manager_Code`: references, see *Relationships*.
+- Count assets as rows: one row is one physical asset.
+- `Is_Active` is 1 on every row, so it doesn't separate active from retired assets. Don't filter on it.
+- `AssignType` decides who has the asset. `Emp`: the employee in `Assined_HRCode` / `Empname`. `Loc`: a location,
+  with no person. As of 2026-10-28: 9,598 `Emp`, 6,685 `Loc`, 65 empty.
+- Prices are often empty. Never report a sum of `Unit_Price` or `Unit_TotalPrice` as total asset value without
+  also saying how many rows have a price.
+- Group by `typename`, `Company`, `ProjectName` or `Department_Name` directly; no joins are needed.
 
-### dbo.V_TWEBWF_Department
+### Notes
 
-One row per department: 44 rows *(measured 2026-10-28)*. Key: `Department_ID`. `ISProject` marks
-departments that are projects *(unconfirmed meaning)*.
-
-### dbo.V_TWEBWF_Projects
-
-One row per project: 1,004 rows *(measured 2026-10-28)*. Key: `Project_ID` (int).
-
-### dbo.ItmCat_Duplicate_Item_Code
-
-Item-catalog cleanup report: pairs of catalog items sharing an `Item_Code`, with the kept item and its
-duplicate. 142 rows *(measured 2026-10-28)*. `Same_Name` = 1 when both items also have the same name
-*(unconfirmed)*. Not related to the asset views.
+- `Empname` and `Assined_HRCode` identify people. Prefer counts over lists of named employees.
+- 65 rows have an empty `typename`.
 
 ## Relationships
 
-SQL Server views carry no foreign keys, so the joins below are the reference.
+None. `dbo.PBI_PH_Assets` is the only allowed view.
 
-| From | To | Notes |
-|---|---|---|
-| `PBI_PH_Assets.Assined_HRCode` | `V_TWEBWF_Employee.User_HR_Code` | All 9,598 assets with `AssignType = 'Emp'` match an employee *(measured 2026-10-28)* |
-| `V_TWEBWF_Employee.Department_ID` | `V_TWEBWF_Department.Department_ID` | *Unconfirmed*, both `nvarchar(20)` |
-| `V_TWEBWF_Employee.Project_ID` | `V_TWEBWF_Projects.Project_ID` | *Unconfirmed*: `nvarchar(20)` vs `int`, so cast before joining |
-| `V_TWEBWF_Employee.Manager_Code` | `V_TWEBWF_Employee.User_HR_Code` | *Unconfirmed*, manager hierarchy |
+## Additional metadata
 
-`PBI_PH_Assets` already has `Department_Name` and `ProjectName` as text. Prefer those over joining through
-the employee view, which gives the employee's *current* department rather than the one the asset is
-recorded under.
-
-## Business rules
-
-- Asset counts are per row of `PBI_PH_Assets`: one row is one physical asset.
-- Asset ownership comes from `AssignType`: `Emp` means assigned to the person in `Assined_HRCode`, `Loc` means
-  assigned to a location, not a person.
-- TODO (data owner): rules for counting current employees, retired assets, and which company an asset belongs to.
-
-## Codes and values
-
-| Column | Value | Meaning | Rows *(measured 2026-10-28)* |
-|---|---|---|---|
-| `PBI_PH_Assets.AssignType` | `Emp` | Assigned to an employee | 9,598 |
-| | `Loc` | Assigned to a location | 6,685 |
-| | *(empty)* | Not recorded | 65 |
-| `PBI_PH_Assets.Isstore` | `0` / empty | *Unconfirmed:* 1 would mean the asset is in a store room | 1,230 / 15,118 |
-
-## Sensitive data
-
-`V_TWEBWF_Employee` holds personal data: national ID, passport, visa and residence numbers, bank account,
-payroll password, birthdate, personal phone numbers, emails and home address. These columns are currently
-**not** hidden by the server. Don't return them unless the question needs them, and prefer counts over row lists.
+- Owner: TODO (name / team).
+- Refresh schedule: TODO.

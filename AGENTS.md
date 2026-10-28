@@ -60,8 +60,11 @@ instance for testing, override the port with the `Urls` environment variable or 
    uses for objects and columns that don't exist (`Invalid object name '…'.`, `Invalid column name '…'.`),
    and never appear in metadata, keys, relationships or dependencies.
 4. **Out of scope is never loaded.** The catalog snapshot only contains in-scope, non-excluded objects.
-5. **Metadata explains, policy enforces.** The `metadata/*.md` files help agents understand the data. They
-   are never used for access control.
+5. **Metadata explains; only its Allowed views table enforces.** The `metadata/<ConnectionName>.md` files
+   follow [metadata/guidelines.md](metadata/guidelines.md). Their `## Allowed views` table is a hard whitelist:
+   it narrows what ObjectScope and the exclusions allow and never widens it, and it fails closed (missing file
+   or table means no views are exposed). Everything else in the files is explanation for agents and is never
+   used for access control.
 6. **No secrets in Git.** Connection strings with passwords go in `src/SqlMcp.Server/appsettings.Local.json`
    (gitignored) or environment variables. `appsettings.json` keeps empty values.
 7. **Every `run_select` call is audited**, including rejected and failed ones.

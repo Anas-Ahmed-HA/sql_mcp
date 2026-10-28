@@ -7,16 +7,20 @@ namespace SqlMcp.Server.Metadata;
 public sealed partial record MetadataSection(string Title, int Level, string Markdown);
 
 /// <summary>
-/// A parsed business-rules file: the full Markdown for agents to read, plus its sections so the part about
-/// one object can be returned with that object's schema. Written by people; explains, never enforces.
+/// A parsed business-rules file (see metadata/guidelines.md): the full Markdown for agents to read, its sections
+/// so the part about one view can be returned with that view's schema, and the Allowed views whitelist.
 /// </summary>
 public sealed partial class MetadataDocument
 {
+    public const string AllowedViewsHeading = "Allowed views";
+    public const string ColumnsHeading = "Columns";
+
     private MetadataDocument(string connectionName, string markdown, IReadOnlyList<MetadataSection> sections)
     {
         ConnectionName = connectionName;
         Markdown = markdown;
         Sections = sections;
+        AllowedViews = ReadAllowedViews();
     }
 
     public string ConnectionName { get; }
@@ -24,6 +28,12 @@ public sealed partial class MetadataDocument
     public string Markdown { get; }
 
     public IReadOnlyList<MetadataSection> Sections { get; }
+
+    /// <summary>
+    /// The first column of the "## Allowed views" table, as written. Null when the section is missing,
+    /// empty when it has no rows. Enforced as a whitelist by the catalog (see <see cref="ViewWhitelist"/>).
+    /// </summary>
+    public IReadOnlyList<string>? AllowedViews { get; }
 
     /// <summary>What agents are told when no file exists for the connection.</summary>
     public static string MissingMessage(string connectionName) =>
@@ -34,12 +44,53 @@ public sealed partial class MetadataDocument
     /// optionally in backticks or brackets. Case-insensitive.
     /// </summary>
     public MetadataSection? FindObjectSection(string schema, string name) =>
-        Sections.FirstOrDefault(s => SqlNames.Split(s.Title.Replace("`", string.Empty)) switch
+        IndexOfObjectSection(schema, name) is var index and >= 0 ? Sections[index] : null;
+
+    /// <summary>
+    /// The first column of the object's "### Columns" table. Null when the object has no section or the
+    /// section has no Columns subsection.
+    /// </summary>
+    public IReadOnlyList<string>? ColumnsOf(string schema, string name)
+    {
+        var index = IndexOfObjectSection(schema, name);
+        if (index < 0)
         {
-            [var objectName] => Eq(objectName, name),
-            [var sectionSchema, var objectName] => Eq(sectionSchema, schema) && Eq(objectName, name),
-            _ => false,
-        });
+            return null;
+        }
+
+        var columns = ChildrenOf(index).FirstOrDefault(s => Eq(s.Title, ColumnsHeading));
+        return columns is null ? null : FirstTableColumn(columns.Markdown);
+    }
+
+    private int IndexOfObjectSection(string schema, string name)
+    {
+        for (var i = 0; i < Sections.Count; i++)
+        {
+            var names = SqlNames.Split(Sections[i].Title.Replace("`", string.Empty)) switch
+            {
+                [var objectName] => Eq(objectName, name),
+                [var sectionSchema, var objectName] => Eq(sectionSchema, schema) && Eq(objectName, name),
+                _ => false,
+            };
+
+            if (names)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>The sections nested under the one at <paramref name="index"/>.</summary>
+    private IEnumerable<MetadataSection> ChildrenOf(int index)
+    {
+        var level = Sections[index].Level;
+        for (var i = index + 1; i < Sections.Count && Sections[i].Level > level; i++)
+        {
+            yield return Sections[i];
+        }
+    }
 
     private static bool Eq(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 }

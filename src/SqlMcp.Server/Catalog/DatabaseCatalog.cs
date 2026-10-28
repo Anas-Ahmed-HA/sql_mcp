@@ -3,16 +3,19 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using SqlMcp.Server.Configuration;
 using SqlMcp.Server.Data;
+using SqlMcp.Server.Metadata;
 
 namespace SqlMcp.Server.Catalog;
 
 /// <summary>
-/// Reads metadata from SQL Server's catalog views. Only what the login can see is returned
-/// (SQL Server's metadata visibility), and only what the object scope and exclusion lists allow is kept.
+/// Reads metadata from SQL Server's catalog views. An object is exposed only when all of these allow it:
+/// the login can see it (SQL Server's metadata visibility), the object scope includes its kind, the metadata
+/// file's Allowed views whitelist lists it, and the exclusion lists don't hide it.
 /// </summary>
 public sealed partial class DatabaseCatalog(
     ISqlConnectionFactory connections,
     IMemoryCache cache,
+    IMetadataStore metadata,
     IOptions<DatabaseOptions> options,
     ILogger<DatabaseCatalog> logger) : IDatabaseCatalog
 {
@@ -20,21 +23,27 @@ public sealed partial class DatabaseCatalog(
 
     private readonly ISqlConnectionFactory _connections = connections;
     private readonly IMemoryCache _cache = cache;
+    private readonly IMetadataStore _metadata = metadata;
     private readonly DatabaseOptions _options = options.Value;
     private readonly ILogger<DatabaseCatalog> _logger = logger;
     private readonly ExclusionPolicy _policy = new(options.Value);
 
     public async Task<CatalogSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
     {
-        var snapshot = await _cache.GetOrCreateAsync(SnapshotCacheKey, async entry =>
+        // The whitelist lives in the metadata file, which can change at any time. The store hands out the same
+        // document instance until the file changes, so a different instance means the snapshot is stale.
+        var document = _metadata.GetDocument();
+        if (_cache.TryGetValue(SnapshotCacheKey, out SnapshotEntry? cached) && ReferenceEquals(cached!.Source, document))
         {
-            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(_options.CatalogCacheMinutes);
-            return await LoadSnapshotAsync(cancellationToken);
-        });
-        return snapshot!;
+            return cached.Snapshot;
+        }
+
+        var snapshot = await LoadSnapshotAsync(document, cancellationToken);
+        _cache.Set(SnapshotCacheKey, new SnapshotEntry(snapshot, document), TimeSpan.FromMinutes(_options.CatalogCacheMinutes));
+        return snapshot;
     }
 
-    private async Task<CatalogSnapshot> LoadSnapshotAsync(CancellationToken cancellationToken)
+    private async Task<CatalogSnapshot> LoadSnapshotAsync(MetadataDocument? document, CancellationToken cancellationToken)
     {
         var scope = _options.ObjectScope;
 
@@ -75,13 +84,23 @@ public sealed partial class DatabaseCatalog(
             _logger.LogWarning("Exclusion entry has no effect: {Problem}. Check the spelling; nothing is hidden by it.", problem);
         }
 
+        var whitelist = new ViewWhitelist(document?.AllowedViews);
+        CheckWhitelist(whitelist, rows.Select(r => (r.Schema, r.Name)).ToList());
+
         var objects = new List<CatalogObject>();
+        var notAllowed = 0;
         var excludedObjects = 0;
         var hiddenColumns = 0;
         foreach (var row in rows)
         {
             if (!scope.Includes(row.Kind))
             {
+                continue;
+            }
+
+            if (!whitelist.Allows(row.Schema, row.Name))
+            {
+                notAllowed++;
                 continue;
             }
 
@@ -101,8 +120,10 @@ public sealed partial class DatabaseCatalog(
         }
 
         _logger.LogInformation(
-            "Catalog loaded: {Count} objects in scope {Scope}; {ExcludedObjects} excluded, {HiddenColumns} columns hidden.",
-            objects.Count, scope, excludedObjects, hiddenColumns);
+            "Catalog loaded: {Count} objects exposed (scope {Scope}; {NotAllowed} not in Allowed views, {ExcludedObjects} excluded, {HiddenColumns} columns hidden).",
+            objects.Count, scope, notAllowed, excludedObjects, hiddenColumns);
+
+        CheckDocumentedColumns(document, objects);
         return new CatalogSnapshot(objects);
     }
 
@@ -113,4 +134,7 @@ public sealed partial class DatabaseCatalog(
         command.CommandTimeout = _options.CommandTimeoutSeconds;
         return command;
     }
+
+    /// <param name="Source">The metadata document the snapshot's whitelist came from (null when there was none).</param>
+    private sealed partial record SnapshotEntry(CatalogSnapshot Snapshot, MetadataDocument? Source);
 }

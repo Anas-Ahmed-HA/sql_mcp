@@ -67,6 +67,12 @@ response never reveals that it exists.
 Out-of-scope objects are never loaded into the catalog. The list of in-scope objects is cached in memory
 for `CatalogCacheMinutes` (default 10), so new or dropped objects show up within that time.
 
+### Allowed views (server-enforced)
+
+On top of the scope, the `## Allowed views` table in the connection's metadata file is a hard whitelist. An
+object is exposed only if it is visible to the login, inside `ObjectScope`, listed there, and not excluded.
+Currently that's only `dbo.PBI_PH_Assets`. See *Business-rules metadata* below.
+
 ### Exclusions (server-enforced)
 
 Inside the scope, specific objects and columns can be hidden:
@@ -93,9 +99,9 @@ Inside the scope, specific objects and columns can be hidden:
 - **`run_select`** applies the same lists: it rejects queries that name a hidden column, and `SELECT *`
   on an object with hidden columns.
 
-The `appsettings.json` in this repo ships with the `V_TWEBWF_Employee` list **empty, by decision**, so every
-column of that view is currently visible and queryable. Candidates to hide if that changes, based on
-column names only: `NationalID`, `PayrollPass`, `Alg_AccountNo`, `Alg_Passno`, `Alg_AddressPass`,
+The `appsettings.json` in this repo ships with the `V_TWEBWF_Employee` list **empty, by decision**. That view
+isn't in the Allowed views whitelist, so it isn't exposed at all right now. If it's ever allowed, these are the
+candidates to hide, based on column names only: `NationalID`, `PayrollPass`, `Alg_AccountNo`, `Alg_Passno`, `Alg_AddressPass`,
 `Alg_VisaNo`, `Alg_StayNo`, `Alg_Warrantyno`, `Birthdate`, `Children_count`, `CarNo`, `PersonalEmail`,
 `Alg_personalEmail`, `Alg_personalPhone`, `Mobile`, `Mobile1`, `Phone`, `Address`, `Street`.
 
@@ -219,22 +225,36 @@ so edits to the deployed copy apply without a restart.
 | `describe_object` | The object's own section (`businessMetadata`), plus a note pointing to `get_business_rules` |
 | Server instructions | Tell agents to call `get_business_rules` first |
 
-**Writing the file:**
+**Writing the file:** follow [metadata/guidelines.md](metadata/guidelines.md). In short:
 
-- Any heading that names an object (`### dbo.PBI_PH_Assets`, `` ### `PBI_PH_Assets` ``, `### [dbo].[PBI_PH_Assets]`)
-  starts that object's section. The section runs until the next heading of the same or a higher level.
-  Deeper headings and code blocks stay inside it.
-- Suggested sections: Purpose, Objects, Relationships, Business rules, Codes and values, Sensitive data. Views
-  have no foreign keys, so **Relationships** is where joins are documented.
-- Mark what isn't confirmed. The starter [Apps_InformationTechnology.md](metadata/Apps_InformationTechnology.md)
-  uses *Measured (date)* for counts taken from the data, and *Unconfirmed* for inferences the data owner
-  still has to check.
-- **Don't name hidden objects or columns.** The server logs a warning when the file mentions anything in
-  `ExcludeObjects` / `ExcludeColumns`, because agents reading it would learn that the hidden item exists.
+```
+# <ConnectionName>                      purpose
+## Allowed views                        | View | Description |      ← enforced whitelist
+## <schema>.<view>                      one per allowed view
+### Columns                             | Column | Description |    every column (required)
+### Business rules                      optional
+### Notes                               optional
+## Relationships                        | From | To | Cardinality | Notes |
+## Additional metadata                  optional, applies to all views
+```
 
-The metadata files help the agent **understand** the data and write correct queries. They don't
-**enforce** anything: an agent can ignore text. Rules that restrict who sees what belong in code and
-policy (roadmap phase 2), never only in these files.
+**The Allowed views table is enforced.** Everything else in the file only explains; this one table controls
+access:
+
+- Only listed objects are exposed. Every tool treats anything else as if it doesn't exist, and that includes
+  dependency lists in `describe_object`.
+- It narrows `ObjectScope` and the exclusion lists, and never widens them.
+- It **fails closed**: no file, an unreadable file, or no `## Allowed views` table means nothing is exposed,
+  and an error is logged.
+- Changes apply on the next call. The catalog snapshot is rebuilt whenever the file changes, without waiting
+  for `CatalogCacheMinutes`. Whoever can edit the deployed copy decides what agents see, so treat it like
+  configuration.
+
+**Checks logged at each catalog load:**
+- whitelist entries that aren't `schema.view`, or that match no visible object
+- allowed views without a `## schema.view` section and `### Columns` table
+- columns the file lists that don't exist or are hidden, and visible columns it doesn't describe
+- mentions of hidden objects or columns anywhere in the file, which would tell agents those items exist
 
 ## Layout
 
@@ -247,7 +267,8 @@ AI_SqlMCP/
 ├─ Directory.Build.props          shared target framework / language settings
 ├─ AI_SqlMCP.sln
 ├─ metadata/
-│  └─ Apps_InformationTechnology.md      business rules and relationships, one file per connection
+│  ├─ guidelines.md                      the standard every metadata file follows
+│  └─ Apps_InformationTechnology.md      allowed views, columns, rules, relationships for that connection
 ├─ sql/
 │  └─ 01_create_readonly_principal.sql   login + user + [mcp_view_reader] role, views only
 └─ src/SqlMcp.Server/
@@ -261,7 +282,8 @@ AI_SqlMCP/
    │  └─ DatabaseStartupCheck.cs  logs server/db/login/view count, warns if the login can write
    ├─ Catalog/
    │  ├─ IDatabaseCatalog.cs
-   │  ├─ DatabaseCatalog.cs       snapshot load + cache          .Describe.cs  one object   .Sql.cs  catalog queries
+   │  ├─ DatabaseCatalog.cs       snapshot load + cache + whitelist   .Describe.cs  one object   .Sql.cs  catalog queries
+   │  │                           .MetadataChecks.cs  whitelist / column-documentation warnings
    │  ├─ CatalogSnapshot.cs       in-scope objects, name resolution
    │  ├─ ExclusionPolicy.cs       exclusion matching             .Diagnostics.cs  typo detection   .ObjectKey.cs
    │  ├─ SqlNames.cs              multi-part name parsing ([schema].[name])
@@ -269,7 +291,8 @@ AI_SqlMCP/
    ├─ Metadata/
    │  ├─ IMetadataStore.cs
    │  ├─ MetadataStore.cs         reads metadata/<ConnectionName>.md, re-reads on change   .Diagnostics.cs  hidden-name warning
-   │  └─ MetadataDocument.cs      sections + per-object lookup   .Parsing.cs  Markdown headings
+   │  ├─ MetadataDocument.cs      sections + per-object lookup   .Parsing.cs  headings   .Tables.cs  Allowed views / Columns tables
+   │  └─ ViewWhitelist.cs         the enforced Allowed views list (fails closed)
    ├─ Query/
    │  ├─ SelectQueryGuard.cs      validates agent SQL            .Rules.cs  allow/block lists   .Visitor.cs  syntax-tree walk
    │  ├─ GuardResult.cs
@@ -286,7 +309,8 @@ AI_SqlMCP/
       └─ CatalogToolResults.cs / QueryToolResults.cs   response shapes returned to agents
 tests/SqlMcp.Tests/
    ├─ SelectQueryGuardTests.cs    .Allowed.cs   .Rejected.cs   .HiddenColumns.cs
-   └─ MetadataDocumentTests.cs
+   ├─ MetadataDocumentTests.cs    .Tables.cs
+   └─ ViewWhitelistTests.cs
 ```
 
 Planned additions:
@@ -435,7 +459,8 @@ touching the tools.
 3. **All connections go through `ISqlConnectionFactory`.** This is where per-caller `SESSION_CONTEXT` (RLS) is set later.
 4. **Stateless.** No per-caller state in process memory. Anything shared (catalog cache, entitlements) must be
    safe to rebuild on any instance.
-5. **Metadata explains, policy enforces.** The Markdown metadata files never act as access control.
+5. **Metadata explains; only its Allowed views table enforces.** That table is a fail-closed whitelist. Nothing
+   else in the Markdown files acts as access control.
 
 ## Roadmap
 
