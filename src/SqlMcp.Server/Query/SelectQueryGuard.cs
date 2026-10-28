@@ -1,5 +1,6 @@
 using Microsoft.SqlServer.TransactSql.ScriptDom;
 using SqlMcp.Server.Catalog;
+using SqlMcp.Server.Errors;
 
 namespace SqlMcp.Server.Query;
 
@@ -18,12 +19,12 @@ public sealed partial class SelectQueryGuard
     {
         if (string.IsNullOrWhiteSpace(sql))
         {
-            return GuardResult.Reject("The query is empty.");
+            return GuardResult.Reject(AgentErrors.NotASingleSelect("The query is empty."));
         }
 
         if (sql.Length > MaxSqlLength)
         {
-            return GuardResult.Reject($"The query is longer than {MaxSqlLength} characters.");
+            return GuardResult.Reject(AgentErrors.QueryTooLong(MaxSqlLength));
         }
 
         var parser = new TSql170Parser(initialQuotedIdentifiers: true);
@@ -33,22 +34,23 @@ public sealed partial class SelectQueryGuard
         if (errors.Count > 0)
         {
             var e = errors[0];
-            return GuardResult.Reject($"Syntax error at line {e.Line}, column {e.Column}: {e.Message}");
+            return GuardResult.Reject(AgentErrors.SyntaxError(e.Line, e.Column, e.Message));
         }
 
         if (fragment is not TSqlScript { Batches: [{ Statements: [var statement] }] })
         {
-            return GuardResult.Reject("Only a single SELECT statement is allowed.");
+            return GuardResult.Reject(AgentErrors.NotASingleSelect("Only a single SELECT statement is allowed."));
         }
 
         if (statement is not SelectStatement select)
         {
-            return GuardResult.Reject($"Only SELECT statements are allowed (got {statement.GetType().Name.Replace("Statement", string.Empty)}).");
+            return GuardResult.Reject(AgentErrors.NotASingleSelect(
+                $"Only SELECT statements are allowed (got {statement.GetType().Name.Replace("Statement", string.Empty)})."));
         }
 
         if (select.Into is not null)
         {
-            return GuardResult.Reject("SELECT ... INTO is not allowed.");
+            return GuardResult.Reject(AgentErrors.NotASingleSelect("SELECT ... INTO is not allowed."));
         }
 
         var cteNames = select.WithCtesAndXmlNamespaces?.CommonTableExpressions

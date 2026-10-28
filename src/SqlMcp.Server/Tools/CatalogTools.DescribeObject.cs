@@ -1,7 +1,7 @@
 using System.ComponentModel;
-using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using SqlMcp.Server.Catalog;
+using SqlMcp.Server.Errors;
 
 namespace SqlMcp.Server.Tools;
 
@@ -26,14 +26,16 @@ public sealed partial class CatalogTools
 
         if (resolution.IsInvalid)
         {
-            throw new McpException($"'{name}' is not a valid object name. Use 'schema.object' or 'object'.");
+            throw AgentErrors.InvalidArgument(
+                $"'{name}' is not a valid object name.",
+                "Write it as schema.object (or just object), as list_objects returns it.").ToException();
         }
 
         if (resolution.Match is not { } obj)
         {
-            throw resolution.Candidates.Count > 1
-                ? new McpException($"'{name}' is ambiguous. Specify the schema: {string.Join(", ", resolution.Candidates.Select(c => c.FullName))}.")
-                : new McpException($"Object '{name}' was not found. Use list_objects to see the available objects.");
+            throw (resolution.Candidates.Count > 1
+                ? AgentErrors.AmbiguousObject(name, resolution.Candidates.Select(c => c.FullName))
+                : AgentErrors.UnknownObject(name)).ToException();
         }
 
         var described = await _catalog.DescribeAsync(db, obj, cancellationToken);

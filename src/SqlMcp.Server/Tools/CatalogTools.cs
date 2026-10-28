@@ -1,6 +1,6 @@
-using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using SqlMcp.Server.Catalog;
+using SqlMcp.Server.Errors;
 using SqlMcp.Server.Metadata;
 using SqlMcp.Server.Security;
 
@@ -21,7 +21,7 @@ public sealed partial class CatalogTools(IDatabaseAccess access, IDatabaseCatalo
         "views" or "view" => DbObjectKind.View,
         "tables" or "table" => DbObjectKind.Table,
         "all" or "" => null,
-        _ => throw new McpException($"Unknown kind '{kind}'. Use 'views', 'tables' or 'all'."),
+        _ => throw AgentErrors.InvalidArgument($"Unknown kind '{kind}'.", "Use 'views', 'tables' or 'all'.").ToException(),
     };
 
     private static string TypeName(DbObjectKind kind) => kind == DbObjectKind.View ? "view" : "table";

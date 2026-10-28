@@ -2,12 +2,11 @@
 using Microsoft.Extensions.Configuration.EnvironmentVariables;
 using Microsoft.Extensions.Configuration.Json;
 using Microsoft.Extensions.Options;
-using ModelContextProtocol;
 using ModelContextProtocol.AspNetCore;
-using ModelContextProtocol.Protocol;
 using SqlMcp.Server.Catalog;
 using SqlMcp.Server.Configuration;
 using SqlMcp.Server.Data;
+using SqlMcp.Server.Errors;
 using SqlMcp.Server.Metadata;
 using SqlMcp.Server.Query;
 using SqlMcp.Server.Security;
@@ -103,28 +102,20 @@ builder.Services
         {
             return await next(context, cancellationToken);
         }
-        catch (McpException ex) when (ex.GetType() == typeof(McpException))
+        catch (AgentErrorException ex)
         {
-            // Tools throw plain McpException for expected, agent-facing errors (rejected query, unknown object).
-            // Return them as tool errors here so they aren't logged as server failures with a stack trace.
-            return new CallToolResult { IsError = true, Content = [new TextContentBlock { Text = ex.Message }] };
+            // Expected, agent-facing errors (unknown database, rejected query, SQL error). Returned as a JSON tool
+            // error the agent can act on, instead of being logged as a server failure with a stack trace.
+            return ex.Error.ToToolResult();
         }
         catch (ArgumentException ex) when (ex.ParamName == "arguments")
         {
             // Thrown while binding the call's arguments, before the tool runs: usually a missing required argument
-            // from a client whose tool list predates it (database was added in 0.4). Tell the agent what to fix.
+            // from a client whose tool list predates it (database was added in 0.4).
             var message = ex.Message.Replace($" (Parameter '{ex.ParamName}')", string.Empty);
             context.Services?.GetRequiredService<ILogger<Program>>()
                 .LogWarning("Tool call {Tool} rejected: {Error}", context.Params?.Name, message);
-            return new CallToolResult
-            {
-                IsError = true,
-                Content = [new TextContentBlock
-                {
-                    Text = $"{message} Every tool except list_databases needs 'database': call list_databases for the names. " +
-                        "If your tool list doesn't show that argument, reconnect to refresh it.",
-                }],
-            };
+            return AgentErrors.MissingArgument(message).ToToolResult();
         }
     }));
 

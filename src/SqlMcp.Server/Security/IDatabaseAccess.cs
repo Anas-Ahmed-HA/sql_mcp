@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Options;
-using ModelContextProtocol;
 using SqlMcp.Server.Configuration;
+using SqlMcp.Server.Errors;
 
 namespace SqlMcp.Server.Security;
 
@@ -27,5 +27,5 @@ public sealed partial class AllDatabasesAccess(IOptions<DatabaseOptions> options
 
     public string Resolve(string database) =>
         Available.FirstOrDefault(d => string.Equals(d, database.Trim(), StringComparison.OrdinalIgnoreCase))
-        ?? throw new McpException($"Database '{database}' was not found. Use list_databases to see the available databases.");
+        ?? throw AgentErrors.UnknownDatabase(database).ToException();
 }

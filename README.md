@@ -39,6 +39,32 @@ Every tool except `list_databases` takes a `database` argument: one of the names
 
 Endpoints: `POST /mcp` (MCP, rate-limited per IP) and `GET /health` (also checks that SQL Server answers).
 
+## Errors
+
+A failed tool call returns a tool error whose text is JSON, so the agent can tell what went wrong and fix it:
+
+```json
+{ "code": "invalid_column", "message": "Invalid column name 'Compnay'.", "fix": "Call describe_object for the exact column names of the object and use one of them.", "retryable": false }
+```
+
+`retryable: true` means the same call may work later unchanged. Every code is defined in
+[AgentErrors.cs](src/SqlMcp.Server/Errors/AgentErrors.cs); SQL Server errors are mapped by number in
+[AgentErrors.Sql.cs](src/SqlMcp.Server/Errors/AgentErrors.Sql.cs).
+
+| Code | When |
+|---|---|
+| `missing_argument`, `invalid_argument` | A tool argument is missing or malformed |
+| `unknown_database` | The `database` isn't one `list_databases` returns |
+| `database_unavailable` | SQL Server can't be reached (retryable) |
+| `unknown_object`, `ambiguous_object` | The object isn't exposed, or needs its schema |
+| `syntax_error`, `not_a_single_select`, `query_too_long`, `cross_database`, `blocked_construct` | The guard rejected the query; nothing ran |
+| `invalid_column`, `ambiguous_column`, `not_in_group_by`, `conversion_failed`, `divide_by_zero` | SQL Server rejected the query |
+| `timeout` | The query ran out of time |
+| `deadlock` | SQL Server picked the query as a deadlock victim (retryable) |
+| `sql_error` | Any other SQL Server error, with its message |
+
+Objects and databases that aren't allowed get the same error as ones that don't exist.
+
 ## How access is controlled
 
 0. **Databases are separate.** Each configured database has its own connection string (and login), metadata file,
@@ -219,7 +245,8 @@ sql/                       read-only principal script
 src/SqlMcp.Server/
   Catalog/                 exposed objects (whitelist applied), object descriptions, ObjectName parsing
   Configuration/           Database / Query / Metadata options
-  Data/                    connection factory, startup check
+  Data/                    connection factory, startup and health checks
+  Errors/                  every agent-facing error: code, message, fix
   Metadata/                metadata file loading, parsing, Allowed views whitelist
   Query/                   SQL guard, executor, audit log
   Security/                caller identity, which databases a caller may use

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using ModelContextProtocol.Server;
 using SqlMcp.Server.Catalog;
 using SqlMcp.Server.Configuration;
+using SqlMcp.Server.Errors;
 using SqlMcp.Server.Query;
 using SqlMcp.Server.Security;
 
@@ -29,7 +30,9 @@ public sealed partial class QueryTools(
     private readonly ICallerContext _caller = caller;
     private readonly QueryOptions _options = options.Value;
 
-    private Task AuditAsync(string tool, string database, string sql, string outcome, string? detail, IReadOnlyList<string> objects, int? rows, bool? truncated, Stopwatch stopwatch) =>
+    private Task AuditAsync(string tool, string database, string sql, string outcome, AgentError? error, IReadOnlyList<string> objects, int? rows, bool? truncated, Stopwatch stopwatch) =>
         _audit.WriteAsync(new AuditEntry(
-            DateTimeOffset.UtcNow, tool, _caller.Current, database, sql, outcome, detail, objects, rows, truncated, stopwatch.ElapsedMilliseconds));
+            DateTimeOffset.UtcNow, tool, _caller.Current, database, sql, outcome,
+            error is null ? null : $"{error.Code}: {error.Message}",
+            objects, rows, truncated, stopwatch.ElapsedMilliseconds));
 }

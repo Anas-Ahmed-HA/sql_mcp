@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
-using ModelContextProtocol;
 using SqlMcp.Server.Configuration;
+using SqlMcp.Server.Errors;
 
 namespace SqlMcp.Server.Data;
 
@@ -32,7 +32,7 @@ public sealed partial class DatabaseHealthCheck(
             await command.ExecuteScalarAsync(cancellationToken);
             return true;
         }
-        catch (McpException)
+        catch (AgentErrorException)
         {
             // The connection factory has already logged why.
             return false;

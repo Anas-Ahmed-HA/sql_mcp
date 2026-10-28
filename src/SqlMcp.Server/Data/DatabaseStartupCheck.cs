@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Options;
-using ModelContextProtocol;
 using SqlMcp.Server.Catalog;
 using SqlMcp.Server.Configuration;
+using SqlMcp.Server.Errors;
 
 namespace SqlMcp.Server.Data;
 
@@ -44,7 +44,7 @@ public sealed partial class DatabaseStartupCheck(
             {
                 return;
             }
-            catch (McpException)
+            catch (AgentErrorException)
             {
                 // The connection factory has already logged why.
                 logger.LogError("Database {Database} is not reachable at startup. Its tools fail until it is; the server keeps running.", database);

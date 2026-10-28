@@ -1,9 +1,9 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using Microsoft.Data.SqlClient;
-using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using SqlMcp.Server.Catalog;
+using SqlMcp.Server.Errors;
 
 namespace SqlMcp.Server.Tools;
 
@@ -16,7 +16,8 @@ public sealed partial class QueryTools
         "the rows. A query can't reference other databases. " +
         "Use it for statistics and exploration: COUNT, SUM, AVG, GROUP BY, TOP n. Write T-SQL (TOP, not LIMIT). " +
         "Only objects from list_objects can be used; call describe_object first and name columns explicitly. " +
-        "Prefer aggregates over fetching raw rows: results are capped at maxRows.")]
+        "Prefer aggregates over fetching raw rows: results are capped at maxRows. " +
+        "Errors come back as JSON with a code, the message and a fix to apply before trying again.")]
     public async Task<RunSelectResult> RunSelectAsync(
         [Description(ToolDescriptions.Database)]
         string database,
@@ -34,9 +35,9 @@ public sealed partial class QueryTools
         {
             db = _access.Resolve(database);
         }
-        catch (McpException ex)
+        catch (AgentErrorException ex)
         {
-            await AuditAsync(RunSelectToolName, database, sql, "rejected", ex.Message, [], null, null, stopwatch);
+            await AuditAsync(RunSelectToolName, database, sql, "rejected", ex.Error, [], null, null, stopwatch);
             throw;
         }
 
@@ -45,18 +46,18 @@ public sealed partial class QueryTools
         {
             snapshot = await _catalog.GetSnapshotAsync(db, cancellationToken);
         }
-        catch (Exception ex) when (ex is McpException or SqlException)
+        catch (AgentErrorException ex)
         {
             // Usually the database can't be reached; the call is still audited.
-            await AuditAsync(RunSelectToolName, db, sql, "error", ex.Message, [], null, null, stopwatch);
+            await AuditAsync(RunSelectToolName, db, sql, "error", ex.Error, [], null, null, stopwatch);
             throw;
         }
 
         var verdict = _guard.Validate(sql, snapshot);
-        if (!verdict.IsAllowed)
+        if (verdict.Error is { } rejection)
         {
-            await AuditAsync(RunSelectToolName, db, sql, "rejected", verdict.Error, [], null, null, stopwatch);
-            throw new McpException(verdict.Error!);
+            await AuditAsync(RunSelectToolName, db, sql, "rejected", rejection, [], null, null, stopwatch);
+            throw rejection.ToException();
         }
 
         var objects = verdict.Objects.Select(o => o.FullName).ToList();
@@ -75,18 +76,12 @@ public sealed partial class QueryTools
                     ? $"Only the first {rowLimit} rows are returned. Aggregate (COUNT/GROUP BY) or filter with WHERE instead of paging through rows."
                     : null);
         }
-        catch (SqlException ex) when (ex.Number == -2)
-        {
-            var message = $"The query timed out after {stopwatch.Elapsed.TotalSeconds:0} s. Filter it more narrowly or aggregate.";
-            await AuditAsync(RunSelectToolName, db, sql, "error", message, objects, null, null, stopwatch);
-            throw new McpException(message);
-        }
         catch (SqlException ex)
         {
-            // SQL Server's messages ("Invalid column name ...", "Conversion failed ...") help the agent fix its query.
-            // Passed through unchanged: the guard words hidden columns/objects the same way, so the two can't be told apart.
-            await AuditAsync(RunSelectToolName, db, sql, "error", $"{ex.Number}: {ex.Message}", objects, null, null, stopwatch);
-            throw new McpException(ex.Message);
+            // SQL Server's message names the column or value at fault, so it stays as is; the code and fix are added.
+            var error = ex.Number == -2 ? AgentErrors.Timeout((int)stopwatch.Elapsed.TotalSeconds) : AgentErrors.FromSqlException(ex);
+            await AuditAsync(RunSelectToolName, db, sql, "error", error, objects, null, null, stopwatch);
+            throw error.ToException(ex);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

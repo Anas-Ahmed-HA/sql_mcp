@@ -1,7 +1,7 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Options;
-using ModelContextProtocol;
 using SqlMcp.Server.Configuration;
+using SqlMcp.Server.Errors;
 
 namespace SqlMcp.Server.Data;
 
@@ -39,7 +39,7 @@ public sealed partial class SqlConnectionFactory : ISqlConnectionFactory
             // The real reason (login failed, server down) is for the log only. Agents get a plain error, which
             // they can act on (try later, use another database) and which doesn't describe the server.
             _logger.LogWarning("Could not open database {Database}: {Error}", database, ex.Message);
-            throw new McpException($"Database '{database}' can't be reached right now. Try again later.", ex);
+            throw AgentErrors.DatabaseUnavailable(database).ToException(ex);
         }
         catch
         {

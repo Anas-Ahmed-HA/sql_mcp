@@ -19,7 +19,7 @@ public partial class SelectQueryGuardTests
     public void Allows_read_only_selects_on_exposed_objects(string sql)
     {
         var result = Validate(sql);
-        Assert.True(result.IsAllowed, result.Error);
+        Assert.True(result.IsAllowed, result.Error?.Message);
     }
 
     [Fact]

@@ -72,6 +72,15 @@ instance for testing, override the port with the `Urls` environment variable or 
    (gitignored) or environment variables. `appsettings.json` keeps empty values.
 7. **Every `run_select` call is audited**, including rejected and failed ones, with its database.
 
+## Errors
+
+- Agent-facing errors are `AgentError`s created in `Errors/AgentErrors*.cs` and thrown with `.ToException()`.
+  Don't throw `McpException` or return error text directly: the call-tool filter in `Program.cs` turns
+  `AgentErrorException` into the JSON agents rely on (`code`, `message`, `fix`, `retryable`).
+- A new kind of error gets a new factory method with a stable `code` and a `fix` that says what to do next.
+  Don't change existing codes; agents may branch on them.
+- Errors for objects or databases that aren't allowed must be identical to the ones for missing ones.
+
 ## Tests
 
 - Any change to `SelectQueryGuard` needs cases in `tests/SqlMcp.Tests/SelectQueryGuardTests.*.cs`: one that

@@ -23,7 +23,7 @@ public partial class SelectQueryGuardTests
     {
         var result = Validate(sql);
         Assert.False(result.IsAllowed);
-        Assert.Contains(expected, result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(expected, result.Error!.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
@@ -45,6 +45,21 @@ public partial class SelectQueryGuardTests
     {
         var result = Validate(sql);
         Assert.False(result.IsAllowed);
-        Assert.Contains(expected, result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(expected, result.Error!.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("SELECT FROM WHERE", "syntax_error")]
+    [InlineData("DELETE FROM dbo.PBI_PH_Assets", "not_a_single_select")]
+    [InlineData("SELECT 1; SELECT 2", "not_a_single_select")]
+    [InlineData("SELECT * FROM dbo.PH_Assets", "unknown_object")]
+    [InlineData("SELECT * FROM OtherDb.dbo.PBI_PH_Assets", "cross_database")]
+    [InlineData("SELECT OBJECT_ID('dbo.PH_Assets')", "blocked_construct")]
+    [InlineData("SELECT * FROM OPENQUERY(LinkedSrv, 'SELECT 1')", "blocked_construct")]
+    public void Rejections_carry_a_code_and_a_fix(string sql, string code)
+    {
+        var error = Validate(sql).Error!;
+        Assert.Equal(code, error.Code);
+        Assert.False(string.IsNullOrWhiteSpace(error.Fix));
     }
 }

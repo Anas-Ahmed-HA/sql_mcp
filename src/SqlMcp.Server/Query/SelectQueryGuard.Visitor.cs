@@ -1,5 +1,6 @@
 using Microsoft.SqlServer.TransactSql.ScriptDom;
 using SqlMcp.Server.Catalog;
+using SqlMcp.Server.Errors;
 
 namespace SqlMcp.Server.Query;
 
@@ -8,18 +9,18 @@ public sealed partial class SelectQueryGuard
 {
     private sealed partial class Visitor(CatalogSnapshot snapshot, HashSet<string> cteNames) : TSqlFragmentVisitor
     {
-        public string? Error { get; private set; }
+        public AgentError? Error { get; private set; }
 
         public List<CatalogObject> Objects { get; } = [];
 
-        private void Fail(string message) => Error ??= message;
+        private void Fail(AgentError error) => Error ??= error;
 
         public override void Visit(TableReference node)
         {
             if (!AllowedTableReferences.Contains(node.GetType()))
             {
-                Fail($"{node.GetType().Name.Replace("TableReference", string.Empty)} is not allowed as a table source. " +
-                     "Only tables and views from list_objects can be queried.");
+                Fail(AgentErrors.BlockedConstruct(
+                    $"{node.GetType().Name.Replace("TableReference", string.Empty)} is not allowed as a table source."));
             }
         }
 
@@ -30,7 +31,7 @@ public sealed partial class SelectQueryGuard
 
             if (name.ServerIdentifier is not null || name.DatabaseIdentifier is not null)
             {
-                Fail($"'{display}': database- or server-qualified names are not allowed. Use schema.object.");
+                Fail(AgentErrors.CrossDatabase(display));
                 return;
             }
 
@@ -48,12 +49,12 @@ public sealed partial class SelectQueryGuard
             }
             else if (resolution.Candidates.Count > 1)
             {
-                Fail($"'{display}' is ambiguous. Specify the schema: {string.Join(", ", resolution.Candidates.Select(c => c.FullName))}.");
+                Fail(AgentErrors.AmbiguousObject(display, resolution.Candidates.Select(c => c.FullName)));
             }
             else
             {
                 // Same wording as SQL Server, so an object that isn't allowed is indistinguishable from a missing one.
-                Fail($"Invalid object name '{display}'.");
+                Fail(AgentErrors.UnknownObject(display));
             }
         }
 
@@ -61,16 +62,17 @@ public sealed partial class SelectQueryGuard
         {
             if (node.CallTarget is not null)
             {
-                Fail($"Calling '{node.FunctionName.Value}' on a schema or object is not allowed (user-defined functions and methods are blocked).");
+                Fail(AgentErrors.BlockedConstruct(
+                    $"Calling '{node.FunctionName.Value}' on a schema or object is not allowed (user-defined functions and methods are blocked)."));
             }
             else if (BlockedFunctions.Contains(node.FunctionName.Value))
             {
-                Fail($"The metadata function {node.FunctionName.Value.ToUpperInvariant()} is not allowed.");
+                Fail(AgentErrors.BlockedConstruct($"The metadata function {node.FunctionName.Value.ToUpperInvariant()} is not allowed."));
             }
         }
 
-        public override void Visit(SelectSetVariable node) => Fail("Assigning to variables is not allowed.");
+        public override void Visit(SelectSetVariable node) => Fail(AgentErrors.BlockedConstruct("Assigning to variables is not allowed."));
 
-        public override void Visit(NextValueForExpression node) => Fail("NEXT VALUE FOR is not allowed (it changes a sequence).");
+        public override void Visit(NextValueForExpression node) => Fail(AgentErrors.BlockedConstruct("NEXT VALUE FOR is not allowed (it changes a sequence)."));
     }
 }
