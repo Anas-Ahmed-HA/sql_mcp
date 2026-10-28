@@ -1,7 +1,7 @@
 namespace SqlMcp.Server.Configuration;
 
 /// <summary>Bound from the "Database" configuration section.</summary>
-public sealed class DatabaseOptions
+public sealed partial class DatabaseOptions
 {
     public const string SectionName = "Database";
 

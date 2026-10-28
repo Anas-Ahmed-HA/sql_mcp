@@ -11,4 +11,9 @@
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.3.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Business-rules files live at the repo root and are copied next to the binary, where the server reads them. -->
+    <None Include="..\..\metadata\**\*.md" LinkBase="metadata" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

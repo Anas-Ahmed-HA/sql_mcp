@@ -4,7 +4,7 @@ namespace SqlMcp.Server.Catalog;
 /// The in-scope, non-excluded objects of one database at a point in time. Anything else is never loaded,
 /// so an object not found here simply does not exist as far as agents are concerned.
 /// </summary>
-public sealed class CatalogSnapshot
+public sealed partial class CatalogSnapshot
 {
     private readonly Dictionary<int, CatalogObject> _byId;
 
@@ -47,7 +47,7 @@ public sealed class CatalogSnapshot
 }
 
 /// <param name="Match">The single matching object, or null when there are zero or several candidates.</param>
-public sealed record NameResolution(CatalogObject? Match, IReadOnlyList<CatalogObject> Candidates, bool IsInvalid)
+public sealed partial record NameResolution(CatalogObject? Match, IReadOnlyList<CatalogObject> Candidates, bool IsInvalid)
 {
     public static NameResolution Invalid { get; } = new(null, [], IsInvalid: true);
 }

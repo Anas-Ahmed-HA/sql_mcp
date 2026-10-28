@@ -1,6 +1,6 @@
 namespace SqlMcp.Server.Catalog;
 
-internal static class SqlNames
+internal static partial class SqlNames
 {
     /// <summary>
     /// Splits a multi-part name such as "name", "schema.name", "[schema].[name]" or "\"schema\".\"name\""

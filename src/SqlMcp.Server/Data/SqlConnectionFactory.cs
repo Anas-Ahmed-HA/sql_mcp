@@ -4,7 +4,7 @@ using SqlMcp.Server.Configuration;
 
 namespace SqlMcp.Server.Data;
 
-public sealed class SqlConnectionFactory : ISqlConnectionFactory
+public sealed partial class SqlConnectionFactory : ISqlConnectionFactory
 {
     private readonly string _connectionString;
 

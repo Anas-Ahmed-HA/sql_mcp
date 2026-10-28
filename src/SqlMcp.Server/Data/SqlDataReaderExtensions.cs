@@ -2,7 +2,7 @@ using Microsoft.Data.SqlClient;
 
 namespace SqlMcp.Server.Data;
 
-internal static class SqlDataReaderExtensions
+internal static partial class SqlDataReaderExtensions
 {
     public static string? GetStringOrNull(this SqlDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);

@@ -11,7 +11,7 @@ public enum DbObjectKind
 /// <summary>A table or view the server exposes. ObjectId is internal and never returned to agents.</summary>
 /// <param name="Columns">Visible columns, in column order. Hidden columns are not included.</param>
 /// <param name="HiddenColumns">Columns removed by ExcludeColumns. Never returned to agents; used to filter and to guard queries.</param>
-public sealed record CatalogObject(
+public sealed partial record CatalogObject(
     int ObjectId,
     string Schema,
     string Name,
@@ -26,7 +26,7 @@ public sealed record CatalogObject(
     public int ColumnCount => Columns.Count;
 }
 
-public sealed record ObjectSchema(
+public sealed partial record ObjectSchema(
     IReadOnlyList<ColumnInfo> Columns,
     KeyInfo? PrimaryKey,
     IReadOnlyList<KeyInfo> UniqueKeys,
@@ -34,7 +34,7 @@ public sealed record ObjectSchema(
     IReadOnlyList<ForeignKeyInfo> ForeignKeys,
     IReadOnlyList<DependencyInfo> DependsOn);
 
-public sealed record ColumnInfo(
+public sealed partial record ColumnInfo(
     string Name,
     string Type,
     bool Nullable,
@@ -44,12 +44,12 @@ public sealed record ColumnInfo(
     string? ComputedDefinition,
     string? Description);
 
-public sealed record KeyInfo(string Name, IReadOnlyList<string> Columns);
+public sealed partial record KeyInfo(string Name, IReadOnlyList<string> Columns);
 
-public sealed record CheckConstraintInfo(string Name, string? Column, string? Definition, bool Disabled);
+public sealed partial record CheckConstraintInfo(string Name, string? Column, string? Definition, bool Disabled);
 
 /// <summary>A foreign key in either direction. Only returned when both ends are inside the object scope.</summary>
-public sealed record ForeignKeyInfo(
+public sealed partial record ForeignKeyInfo(
     string Name,
     string FromObject,
     IReadOnlyList<string> FromColumns,
@@ -60,9 +60,9 @@ public sealed record ForeignKeyInfo(
     bool Disabled);
 
 /// <summary>An object a view (or computed column) reads from. InScope says whether agents may query it.</summary>
-public sealed record DependencyInfo(string Name, string Type, bool InScope);
+public sealed partial record DependencyInfo(string Name, string Type, bool InScope);
 
-public static class ObjectScopeExtensions
+public static partial class ObjectScopeExtensions
 {
     public static bool Includes(this ObjectScope scope, DbObjectKind kind) => scope switch
     {

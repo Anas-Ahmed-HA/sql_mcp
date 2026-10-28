@@ -7,7 +7,7 @@ using SqlMcp.Server.Security;
 namespace SqlMcp.Server.Query;
 
 /// <param name="Outcome">"ok", "rejected" (by the guard), "error" (from SQL Server) or "cancelled".</param>
-public sealed record AuditEntry(
+public sealed partial record AuditEntry(
     DateTimeOffset Timestamp,
     string Tool,
     CallerInfo Caller,
@@ -28,7 +28,7 @@ public interface IAuditLog
 /// Appends one JSON line per query to a daily file and logs a one-line summary. A failed write is logged
 /// but doesn't fail the query: availability is preferred over blocking on a full disk.
 /// </summary>
-public sealed class JsonFileAuditLog : IAuditLog
+public sealed partial class JsonFileAuditLog : IAuditLog
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {

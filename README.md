@@ -5,10 +5,13 @@ For now it runs on **localhost**. Later it will be hosted on a server, and agent
 The long-term goal is access across many databases and solutions, with per-caller visibility decided by
 deterministic policy, never by the agent.
 
-**Current phase: 0.2.** The server serves MCP over Streamable HTTP for one database, with the object
-scope, object/column exclusions, and three tools: `list_objects`, `describe_object` and `run_select`.
-Agents can read data from the exposed views through guarded SELECT queries, and every query is audited.
-**There is no authentication yet.**
+**Current phase: 0.3.** The server serves MCP over Streamable HTTP for one database. It has the object
+scope, object/column exclusions, four tools (`get_business_rules`, `list_objects`, `describe_object`,
+`run_select`) and a business-rules document per database. Agents can read data from the exposed views
+through guarded SELECT queries, and every query is audited. **There is no authentication yet.**
+
+Coding conventions for contributors and AI agents, including the partial-class rule, are in
+[AGENTS.md](AGENTS.md).
 
 ## Tech stack
 
@@ -17,7 +20,7 @@ Agents can read data from the exposed views through guarded SELECT queries, and 
 | Runtime | .NET 8 / ASP.NET Core (set once in `Directory.Build.props`) |
 | MCP | `ModelContextProtocol.AspNetCore` 2.3.0 (official C# SDK), Streamable HTTP, stateless |
 | Database | SQL Server via `Microsoft.Data.SqlClient` |
-| SQL validation (planned) | `Microsoft.SqlServer.TransactSql.ScriptDom` (the T-SQL parser SSMS uses) |
+| SQL validation | `Microsoft.SqlServer.TransactSql.ScriptDom` (Microsoft's T-SQL parser) |
 | DB principal | Read-only login, ideally views only (`sql/01_create_readonly_principal.sql`) |
 
 ### Why stateless
@@ -38,9 +41,14 @@ the client (sampling, elicitation, roots). A data gateway doesn't need those.
 
 | Tool | Status |
 |---|---|
+| `get_business_rules` | Implemented (0.3), see *Business-rules metadata* |
 | `list_objects` | Implemented (0.1) |
-| `describe_object` | Implemented (0.1) |
+| `describe_object` | Implemented (0.1); includes the object's business-rules section since 0.3 |
 | `run_select` | Implemented (0.2) |
+
+| Resource | Content |
+|---|---|
+| `metadata://business-rules` | The business-rules document of the database (text/markdown) |
 
 ### Object scope (server-enforced)
 
@@ -189,31 +197,40 @@ recorded IP is the proxy's until forwarded headers are configured.
 **Errors:** expected errors (rejected query, unknown object) are returned to the agent as tool errors. They
 are not logged as server failures.
 
-## Business-rules metadata (planned)
+## Business-rules metadata
 
-Each connection string will get a Markdown file with the knowledge the database itself doesn't hold:
+Each connection string has a Markdown file with the knowledge the database itself doesn't hold:
 
 ```
 metadata/
 └─ Apps_InformationTechnology.md     one file per entry under Database:ConnectionStrings
 ```
 
-Suggested sections (the examples are illustrative, not verified facts about the data):
+The files live at the repo root and are copied next to the binary on build (`Metadata:Directory`, default
+`metadata`, relative to the app folder). The server re-reads a file whenever its timestamp or size changes,
+so edits to the deployed copy apply without a restart.
 
-| Section | Example content |
+**How agents get it:**
+
+| Where | What |
 |---|---|
-| Purpose | What the database is for and who owns it |
-| Objects | Per view or table: what one row means ("one row = one IT asset"), key columns |
-| Relationships | Logical joins between views and tables, e.g. `<ViewA>.<Column> → <ViewB>.<Column>` |
-| Business rules | e.g. "Inactive assets are excluded from counts unless asked for" |
-| Codes and values | e.g. `AssignType`: `Emp` = assigned to an employee, `Loc` = assigned to a location |
-| Sensitive columns | Columns holding personal data, e.g. employee names and HR codes |
+| `get_business_rules` tool | The whole document. A tool, because many agents can call tools but not read resources |
+| `metadata://business-rules` resource | The same document, for agents that read MCP resources |
+| `describe_object` | The object's own section (`businessMetadata`), plus a note pointing to `get_business_rules` |
+| Server instructions | Tell agents to call `get_business_rules` first |
 
-How the server will use them:
+**Writing the file:**
 
-- exposed as MCP **resources** (`metadata://<ConnectionName>`) so an agent can read them in full
-- the relevant section included in `describe_object` output
-- the server's MCP instructions tell agents to read the metadata before writing queries
+- Any heading that names an object (`### dbo.PBI_PH_Assets`, `` ### `PBI_PH_Assets` ``, `### [dbo].[PBI_PH_Assets]`)
+  starts that object's section. The section runs until the next heading of the same or a higher level.
+  Deeper headings and code blocks stay inside it.
+- Suggested sections: Purpose, Objects, Relationships, Business rules, Codes and values, Sensitive data. Views
+  have no foreign keys, so **Relationships** is where joins are documented.
+- Mark what isn't confirmed. The starter [Apps_InformationTechnology.md](metadata/Apps_InformationTechnology.md)
+  uses *Measured (date)* for counts taken from the data, and *Unconfirmed* for inferences the data owner
+  still has to check.
+- **Don't name hidden objects or columns.** The server logs a warning when the file mentions anything in
+  `ExcludeObjects` / `ExcludeColumns`, because agents reading it would learn that the hidden item exists.
 
 The metadata files help the agent **understand** the data and write correct queries. They don't
 **enforce** anything: an agent can ignore text. Rules that restrict who sees what belong in code and
@@ -221,50 +238,61 @@ policy (roadmap phase 2), never only in these files.
 
 ## Layout
 
+Every class is `partial`, and classes with several concerns are split into `ClassName.Concern.cs` files
+(see [AGENTS.md](AGENTS.md)). Files are listed by class below.
+
 ```
 AI_SqlMCP/
+├─ AGENTS.md                      conventions for contributors and AI agents (CLAUDE.md imports it)
 ├─ Directory.Build.props          shared target framework / language settings
 ├─ AI_SqlMCP.sln
+├─ metadata/
+│  └─ Apps_InformationTechnology.md      business rules and relationships, one file per connection
 ├─ sql/
 │  └─ 01_create_readonly_principal.sql   login + user + [mcp_view_reader] role, views only
 └─ src/SqlMcp.Server/
    ├─ Program.cs                  ASP.NET Core host, options, MCP over HTTP, endpoints
-   ├─ appsettings.json            includes "Urls": http://localhost:5100
+   ├─ appsettings.json            committed settings; secrets go in appsettings.Local.json (gitignored)
    ├─ Properties/launchSettings.json      local dev: http://localhost:5100, Development env
-   ├─ Configuration/
-   │  └─ DatabaseOptions.cs       "Database" config section, ObjectScope enum
+   ├─ Configuration/              DatabaseOptions (+ ObjectScope), QueryOptions, MetadataOptions
    ├─ Data/
-   │  ├─ ISqlConnectionFactory.cs single place connections are opened
-   │  ├─ SqlConnectionFactory.cs
+   │  ├─ ISqlConnectionFactory.cs / SqlConnectionFactory.cs   single place connections are opened
    │  ├─ SqlDataReaderExtensions.cs
    │  └─ DatabaseStartupCheck.cs  logs server/db/login/view count, warns if the login can write
    ├─ Catalog/
-   │  ├─ IDatabaseCatalog.cs      snapshot of in-scope objects (cached) + describe one object
-   │  ├─ DatabaseCatalog.cs       queries sys.objects / sys.columns / sys.indexes / sys.foreign_keys / ...
+   │  ├─ IDatabaseCatalog.cs
+   │  ├─ DatabaseCatalog.cs       snapshot load + cache          .Describe.cs  one object   .Sql.cs  catalog queries
    │  ├─ CatalogSnapshot.cs       in-scope objects, name resolution
-   │  ├─ ExclusionPolicy.cs       ExcludeObjects / ExcludeColumns matching + typo detection
+   │  ├─ ExclusionPolicy.cs       exclusion matching             .Diagnostics.cs  typo detection   .ObjectKey.cs
    │  ├─ SqlNames.cs              multi-part name parsing ([schema].[name])
    │  └─ CatalogModels.cs
+   ├─ Metadata/
+   │  ├─ IMetadataStore.cs
+   │  ├─ MetadataStore.cs         reads metadata/<ConnectionName>.md, re-reads on change   .Diagnostics.cs  hidden-name warning
+   │  └─ MetadataDocument.cs      sections + per-object lookup   .Parsing.cs  Markdown headings
    ├─ Query/
-   │  ├─ SelectQueryGuard.cs      parses and validates agent SQL (ScriptDom)
-   │  ├─ SelectQueryExecutor.cs   runs approved SQL: timeout, row cap, JSON-friendly values
+   │  ├─ SelectQueryGuard.cs      validates agent SQL            .Rules.cs  allow/block lists   .Visitor.cs  syntax-tree walk
+   │  ├─ GuardResult.cs
+   │  ├─ SelectQueryExecutor.cs   timeout, row cap               .Values.cs  JSON-friendly values
    │  └─ AuditLog.cs              JSON-lines audit file + log summary
+   ├─ Resources/
+   │  └─ MetadataResources.cs     metadata://business-rules
    ├─ Security/
    │  └─ ICallerContext.cs        the single source of caller identity (IP / user agent until auth)
-   └─ Tools/
-      ├─ CatalogTools.cs          list_objects, describe_object
-      ├─ CatalogToolResults.cs    response shapes returned to agents
-      └─ QueryTools.cs            run_select
+   └─ Tools/                      one file per tool
+      ├─ CatalogTools.cs          .ListObjects.cs   .DescribeObject.cs
+      ├─ MetadataTools.cs         .GetBusinessRules.cs
+      ├─ QueryTools.cs            .RunSelect.cs
+      └─ CatalogToolResults.cs / QueryToolResults.cs   response shapes returned to agents
 tests/SqlMcp.Tests/
-   └─ SelectQueryGuardTests.cs    what the guard allows and rejects
+   ├─ SelectQueryGuardTests.cs    .Allowed.cs   .Rejected.cs   .HiddenColumns.cs
+   └─ MetadataDocumentTests.cs
 ```
 
 Planned additions:
 
 ```
-├─ metadata/      <ConnectionName>.md business-rules files
 └─ src/SqlMcp.Server/
-   ├─ Metadata/   loads metadata/*.md, serves them as MCP resources
    ├─ Auth/       token validation, fills ICallerContext with the user
    └─ Security/   entitlement adapters, policy, row/column enforcement
 ```
@@ -416,7 +444,7 @@ touching the tools.
 | **0** | Skeleton: HTTP host on localhost, config, DB connectivity, read-only principal *(done)* |
 | **0.1** | `ObjectScope` setting + catalog + `list_objects` / `describe_object` tools + object/column exclusions *(done)* |
 | **0.2** | `run_select` tool: ScriptDom guard, row cap, timeout, audit log (caller IP until auth exists) *(done)* |
-| 0.3 | Per-connection metadata files (`metadata/<ConnectionName>.md`) as MCP resources, merged into `describe_object` |
+| **0.3** | Per-connection metadata files (`metadata/<ConnectionName>.md`): `get_business_rules` tool, MCP resource, merged into `describe_object` *(done)* |
 | 1 | Authentication: delegated user tokens (Entra ID), caller identity, `/.well-known/oauth-protected-resource` |
 | 2 | Entitlement model + policy engine; row filters / column masking; SQL Server RLS |
 | 3 | Multiple databases / solutions; identity mapping; cross-system join rules |

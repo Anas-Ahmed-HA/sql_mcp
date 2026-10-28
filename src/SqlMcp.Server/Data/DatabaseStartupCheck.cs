@@ -10,7 +10,7 @@ namespace SqlMcp.Server.Data;
 /// Runs in the background so it never delays startup, and never stops the server:
 /// a database outage should surface as tool errors, not as a server that fails to launch.
 /// </summary>
-public sealed class DatabaseStartupCheck(
+public sealed partial class DatabaseStartupCheck(
     ISqlConnectionFactory connections,
     IOptions<DatabaseOptions> options,
     ILogger<DatabaseStartupCheck> logger)

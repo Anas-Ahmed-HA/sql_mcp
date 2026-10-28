@@ -1,7 +1,7 @@
 namespace SqlMcp.Server.Security;
 
 /// <param name="UserId">The authenticated end user. Always null until the auth phase.</param>
-public sealed record CallerInfo(string? UserId, string? IpAddress, string? UserAgent);
+public sealed partial record CallerInfo(string? UserId, string? IpAddress, string? UserAgent);
 
 /// <summary>
 /// Who is making the current request. The single place caller identity comes from, so adding
@@ -12,7 +12,7 @@ public interface ICallerContext
     CallerInfo Current { get; }
 }
 
-public sealed class HttpCallerContext(IHttpContextAccessor accessor) : ICallerContext
+public sealed partial class HttpCallerContext(IHttpContextAccessor accessor) : ICallerContext
 {
     public CallerInfo Current
     {

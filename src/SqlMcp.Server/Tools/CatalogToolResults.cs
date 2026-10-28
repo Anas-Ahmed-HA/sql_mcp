@@ -5,20 +5,20 @@ namespace SqlMcp.Server.Tools;
 
 // Wire shapes returned to agents. Optional fields are omitted when empty to keep responses small.
 
-public sealed record ListObjectsResult(
+public sealed partial record ListObjectsResult(
     string Scope,
     int Total,
     bool Truncated,
     IReadOnlyList<ObjectSummary> Objects);
 
-public sealed record ObjectSummary(
+public sealed partial record ObjectSummary(
     string Name,
     string Type,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Description,
     int Columns,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? ApproxRows);
 
-public sealed record DescribeObjectResult(
+public sealed partial record DescribeObjectResult(
     string Name,
     string Type,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Description,
@@ -30,9 +30,10 @@ public sealed record DescribeObjectResult(
     IReadOnlyList<OutgoingForeignKey> References,
     IReadOnlyList<IncomingForeignKey> ReferencedBy,
     IReadOnlyList<DependencyInfo> DependsOn,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BusinessMetadata,
     IReadOnlyList<string> Notes);
 
-public sealed record ColumnResult(
+public sealed partial record ColumnResult(
     string Name,
     string Type,
     bool Nullable,
@@ -43,7 +44,7 @@ public sealed record ColumnResult(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Description);
 
 /// <summary>This object's columns point at another object's key.</summary>
-public sealed record OutgoingForeignKey(
+public sealed partial record OutgoingForeignKey(
     string Name,
     IReadOnlyList<string> Columns,
     string ReferencesObject,
@@ -53,7 +54,7 @@ public sealed record OutgoingForeignKey(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Disabled);
 
 /// <summary>Another object's columns point at this object's key.</summary>
-public sealed record IncomingForeignKey(
+public sealed partial record IncomingForeignKey(
     string Name,
     string FromObject,
     IReadOnlyList<string> FromColumns,

@@ -1,7 +1,7 @@
 namespace SqlMcp.Server.Configuration;
 
 /// <summary>Bound from the "Query" configuration section; limits for run_select.</summary>
-public sealed class QueryOptions
+public sealed partial class QueryOptions
 {
     public const string SectionName = "Query";
 
