@@ -30,9 +30,9 @@ One row is one physical IT asset. Built for Power BI, so names are already joine
 | BarCode | Asset barcode label, e.g. `HACIP0294` |
 | SerialNo | Manufacturer serial number |
 | Model_ID | Model ID; the name is in `Modelname` |
-| Unit_Price | Purchase price per unit; often empty |
-| Unit_Tax | Tax per unit; often empty |
-| Unit_TotalPrice | Price per unit including tax; often empty |
+| Unit_Price | Purchase price of this one asset, probably before tax (unconfirmed); empty on most rows |
+| Unit_Tax | Tax per unit; empty on every row as of 2026-10-28 |
+| Unit_TotalPrice | Total of the whole delivery line (`Unit_Price` × quantity ordered), repeated on every asset of that line. Not a per-unit price |
 | DescGroup_ID | Description group ID (unconfirmed) |
 | Comment | Free-text comment |
 | Is_Active | Active flag; 1 on every row as of 2026-10-28 |
@@ -57,14 +57,21 @@ One row is one physical IT asset. Built for Power BI, so names are already joine
 - `Is_Active` is 1 on every row, so it doesn't separate active from retired assets. Don't filter on it.
 - `AssignType` decides who has the asset. `Emp`: the employee in `Assined_HRCode` / `Empname`. `Loc`: a location,
   with no person. As of 2026-10-28: 9,598 `Emp`, 6,685 `Loc`, 65 empty.
-- Prices are often empty. Never report a sum of `Unit_Price` or `Unit_TotalPrice` as total asset value without
-  also saying how many rows have a price.
+- For asset value, sum `Unit_Price`. Never sum `Unit_TotalPrice`: it repeats the line total on every asset, so
+  a line of 190 PCs counts its total 190 times.
+- Prices are on 1,155 rows (13 delivery lines, all 2025–2026) as of 2026-10-28. Always say how many rows have a
+  price when reporting a value.
+- Prices mix currencies and there is no currency column. Some lines are in the tens of thousands per PC, others
+  in the hundreds (unconfirmed: EGP and USD). Report value per `DeliveryDet_ID` or price range; don't add the two
+  together.
 - Group by `typename`, `Company`, `ProjectName` or `Department_Name` directly; no joins are needed.
 
 ### Notes
 
 - `Empname` and `Assined_HRCode` identify people. Prefer counts over lists of named employees.
 - 65 rows have an empty `typename`.
+- Many delivery lines have fewer assets recorded than were ordered (e.g. 163 of 218 laptops), so
+  `Unit_TotalPrice ÷ Unit_Price` can be larger than the line's row count.
 
 ## Relationships
 
