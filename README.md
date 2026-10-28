@@ -85,10 +85,11 @@ Inside the scope, specific objects and columns can be hidden:
 - **`run_select`** applies the same lists: it rejects queries that name a hidden column, and `SELECT *`
   on an object with hidden columns.
 
-The `appsettings.json` in this repo ships a **starting list** for `V_TWEBWF_Employee`: national ID, payroll
-password, bank account, passport/visa/residence numbers, birthdate, personal phone numbers, emails and
-address. Review it with the data owner. It's a first pass based on column names, not a data-protection
-review.
+The `appsettings.json` in this repo ships with the `V_TWEBWF_Employee` list **empty, by decision**, so every
+column of that view is currently visible and queryable. Candidates to hide if that changes, based on
+column names only: `NationalID`, `PayrollPass`, `Alg_AccountNo`, `Alg_Passno`, `Alg_AddressPass`,
+`Alg_VisaNo`, `Alg_StayNo`, `Alg_Warrantyno`, `Birthdate`, `Children_count`, `CarNo`, `PersonalEmail`,
+`Alg_personalEmail`, `Alg_personalPhone`, `Mobile`, `Mobile1`, `Phone`, `Address`, `Street`.
 
 Exclusions shape what this MCP exposes. They don't replace database permissions: the login can still read
 the hidden columns, so a DBA should still narrow the login where possible.
